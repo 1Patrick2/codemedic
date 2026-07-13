@@ -1,7 +1,6 @@
 """Build and compile the CodeMedic LangGraph workflow.
 
-Stage 4: Complete workflow with Fixer, Human Review (interrupt),
-Sandbox, Verifier, and SQLite Checkpoint.
+B3+B4: Split diagnosis_review and patch_review, add patch validation gate.
 """
 
 from __future__ import annotations
@@ -15,18 +14,22 @@ from langgraph.types import Command
 
 from codemedic.graph.nodes import (
     apply_patch_node,
+    diagnosis_review_node,
     final_report_node,
     fixer_node,
-    human_review_node,
     hybrid_retrieve,
     intake,
     investigator_node,
+    patch_review_node,
+    patch_validation_node,
     run_tests_node,
     verifier_node,
 )
 from codemedic.graph.routers import (
+    diagnosis_review_router,
     evidence_gate_router,
-    human_review_router,
+    patch_review_router,
+    patch_validation_router,
     verify_router,
 )
 from codemedic.graph.state import RepairState
@@ -42,11 +45,7 @@ def _get_checkpointer():
 
 
 def build_workflow() -> StateGraph:
-    """Build and return the repair workflow graph.
-
-    Returns:
-        An uncompiled StateGraph.
-    """
+    """Build and return the repair workflow graph."""
     graph = StateGraph(RepairState)
 
     # ── Register nodes ──────────────────────────────────────────────
@@ -54,8 +53,10 @@ def build_workflow() -> StateGraph:
     graph.add_node("hybrid_retrieve", hybrid_retrieve)
     graph.add_node("investigator_agent", investigator_node)
     graph.add_node("evidence_gate", lambda s: {})  # router-only node
+    graph.add_node("diagnosis_review", diagnosis_review_node)
     graph.add_node("fixer_agent", fixer_node)
-    graph.add_node("human_review", human_review_node)
+    graph.add_node("patch_validation", patch_validation_node)
+    graph.add_node("patch_review", patch_review_node)
     graph.add_node("apply_patch", apply_patch_node)
     graph.add_node("run_tests", run_tests_node)
     graph.add_node("verifier_agent", verifier_node)
@@ -67,23 +68,44 @@ def build_workflow() -> StateGraph:
     graph.add_edge("intake", "hybrid_retrieve")
     graph.add_edge("hybrid_retrieve", "investigator_agent")
 
-    # Evidence gate: conditional routing
+    # Evidence gate → diagnosis_review or fixer or retry
     graph.add_conditional_edges(
         "investigator_agent",
         evidence_gate_router,
         {
             "sufficient": "fixer_agent",
             "insufficient": "hybrid_retrieve",
-            "uncertain": "human_review",
+            "uncertain": "diagnosis_review",
         },
     )
 
-    graph.add_edge("fixer_agent", "human_review")
-
-    # Human review: conditional routing
+    # Diagnosis review → accept (fixer) or reject (end)
     graph.add_conditional_edges(
-        "human_review",
-        human_review_router,
+        "diagnosis_review",
+        diagnosis_review_router,
+        {
+            "accept_diagnosis": "fixer_agent",
+            "reject": "final_report",
+        },
+    )
+
+    graph.add_edge("fixer_agent", "patch_validation")
+
+    # Patch validation gate → valid (review), invalid+retry (fixer), invalid+final
+    graph.add_conditional_edges(
+        "patch_validation",
+        patch_validation_router,
+        {
+            "valid": "patch_review",
+            "invalid_retry": "fixer_agent",
+            "invalid_final": "diagnosis_review",
+        },
+    )
+
+    # Patch review → approve (apply), reject (end), retry (fixer)
+    graph.add_conditional_edges(
+        "patch_review",
+        patch_review_router,
         {
             "approved": "apply_patch",
             "rejected": "final_report",
@@ -95,7 +117,7 @@ def build_workflow() -> StateGraph:
     graph.add_edge("apply_patch", "run_tests")
     graph.add_edge("run_tests", "verifier_agent")
 
-    # Verify router: conditional routing
+    # Verify router
     graph.add_conditional_edges(
         "verifier_agent",
         verify_router,
@@ -112,20 +134,9 @@ def build_workflow() -> StateGraph:
 
 
 def compile_workflow(*, checkpointer=None):
-    """Build and compile the workflow graph.
-
-    Args:
-        checkpointer: Optional checkpointer. If None (default), creates
-            a SQLite checkpointer. Pass an InMemorySaver for testing.
-
-    Returns:
-        A CompiledStateGraph.
-    """
+    """Build and compile the workflow graph."""
     graph = build_workflow()
     cptr = checkpointer or _get_checkpointer()
-    # NOTE: No interrupt_before — the human_review node calls
-    # interrupt() dynamically inside the node. Adding interrupt_before
-    # would create a redundant second interrupt.
     return graph.compile(checkpointer=cptr)
 
 
@@ -138,7 +149,7 @@ def run_workflow(
 ) -> dict:
     """Convenience function to run the full workflow.
 
-    NOTE: Will pause at human_review due to interrupt.
+    NOTE: Will pause at patch_review or diagnosis_review due to interrupt.
     Use resume_workflow() to continue with a decision.
 
     Args:

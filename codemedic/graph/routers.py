@@ -74,14 +74,31 @@ RETRY: Literal["retry"] = "retry"
 
 HumanReviewRoute = Literal["approved", "rejected", "retry"]
 
+DiagnosisReviewRoute = Literal["accept_diagnosis", "reject"]
+PatchValidationRoute = Literal["valid", "invalid_retry", "invalid_final"]
 
-def human_review_router(state: RepairState) -> HumanReviewRoute:
-    """Route based on human review decision.
+
+def diagnosis_review_router(state: RepairState) -> DiagnosisReviewRoute:
+    """Route based on diagnosis review decision.
 
     Rules:
-      - 'approved' → proceed to next step (sandbox in Stage 4, final now)
-      - 'rejected' → end the workflow with final report
-      - 'retry' → go back to the fixer agent
+      - 'accept_diagnosis' → proceed to fixer
+      - 'reject' → final report
+      - None / unknown → reject (safe default)
+    """
+    decision = state.get("human_decision")
+    if decision == "accept_diagnosis":
+        return "accept_diagnosis"
+    return "reject"
+
+
+def patch_review_router(state: RepairState) -> HumanReviewRoute:
+    """Route based on patch review decision.
+
+    Rules:
+      - 'approved' → proceed to sandbox
+      - 'rejected' → final report
+      - 'retry' → go back to fixer
       - None / unknown → rejected (safe default)
     """
     decision = state.get("human_decision")
@@ -90,6 +107,24 @@ def human_review_router(state: RepairState) -> HumanReviewRoute:
     if decision == "retry":
         return "retry"
     return "rejected"
+
+
+def patch_validation_router(state: RepairState) -> PatchValidationRoute:
+    """Route based on diff validation result.
+
+    Rules:
+      - Diff valid → patch_review
+      - Invalid with retry left → fixer_agent
+      - Invalid no retry → diagnosis_review
+
+    All values from state — no LLM calls.
+    """
+    diff_val = state.get("diff_validation", {})
+    if not diff_val or diff_val.get("valid", False):
+        return "valid"
+
+    retry_count = state.get("retry_count", 0)
+    return "invalid_retry" if retry_count < 2 else "invalid_final"
 
 
 def verify_router(state: RepairState) -> RouteLabel:

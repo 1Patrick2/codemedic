@@ -213,18 +213,62 @@ def fixer_node(state: RepairState) -> dict[str, Any]:
         }
 
 
-def human_review_node(state: RepairState) -> dict[str, Any]:
-    """Human-in-the-loop review node using LangGraph interrupt.
+def diagnosis_review_node(state: RepairState) -> dict[str, Any]:
+    """Human review for diagnosis evaluation.
 
-    Calls interrupt() to pause the graph and surface the patch proposal
-    for human review. When resumed, reads the human decision from
-    Command.resume.
+    Triggered when evidence is insufficient, uncertain, or when
+    Investigator encounters errors. Displays diagnosis and allows
+    accept/reject decisions.
+
+    Returns:
+        human_decision and review_reason.
+    """
+    from langgraph.types import interrupt
+
+    diag = state.get("diagnosis")
+
+    interrupt_value = {
+        "review_type": "diagnosis",
+        "message": "Please review the diagnosis.",
+        "issue": state["issue"],
+        "diagnosis": {
+            "root_cause": diag.root_cause if diag else "N/A",
+            "confidence": diag.confidence if diag else 0.0,
+            "suspected_files": diag.suspected_files if diag else [],
+            "evidence_count": len(diag.evidence) if diag else 0,
+        },
+        "options": ["accept_diagnosis", "reject"],
+    }
+
+    human_input = interrupt(interrupt_value)
+
+    if isinstance(human_input, dict):
+        decision = human_input.get("decision", "reject")
+        reason = human_input.get("reason", "")
+    elif isinstance(human_input, str):
+        decision = human_input
+        reason = ""
+    else:
+        decision = "reject"
+        reason = "Invalid input format"
+
+    return {
+        "human_decision": decision,
+        "review_reason": reason,
+    }
+
+
+def patch_review_node(state: RepairState) -> dict[str, Any]:
+    """Human review for patch approval.
+
+    Triggered after Fixer generates a valid patch. Shows diff and
+    allows approve/reject/retry decisions.
 
     If retry count exceeds the maximum, skips the interrupt and
     automatically routes to rejected.
 
     Returns:
-        human_decision and review_reason from the interrupt response.
+        human_decision and review_reason.
     """
     patch = state.get("patch")
     diag = state.get("diagnosis")
@@ -238,7 +282,10 @@ def human_review_node(state: RepairState) -> dict[str, Any]:
             "review_reason": f"Retry limit ({max_retries}) exceeded",
         }
 
+    from langgraph.types import interrupt
+
     interrupt_value = {
+        "review_type": "patch",
         "message": "Please review the proposed patch.",
         "issue": state["issue"],
         "root_cause": diag.root_cause if diag else "N/A",
@@ -246,12 +293,8 @@ def human_review_node(state: RepairState) -> dict[str, Any]:
         "options": ["approved", "rejected", "retry"],
     }
 
-    # Pause execution and wait for human input
-    from langgraph.types import interrupt
-
     human_input = interrupt(interrupt_value)
 
-    # Parse the human decision
     if isinstance(human_input, dict):
         decision = human_input.get("decision", "rejected")
         reason = human_input.get("reason", "")
@@ -266,6 +309,35 @@ def human_review_node(state: RepairState) -> dict[str, Any]:
         "human_decision": decision,
         "review_reason": reason,
     }
+
+
+def patch_validation_node(state: RepairState) -> dict[str, Any]:
+    """Validate the patch against security and structural rules.
+
+    Runs after Fixer produces a patch but before human review.
+    Stores diff_validation result in state for routing.
+
+    Returns:
+        diff_validation result.
+    """
+    patch = state.get("patch")
+    if patch is None:
+        from codemedic.schemas.results import DiffValidationResult
+        return {
+            "diff_validation": DiffValidationResult(
+                valid=False,
+                errors=["No patch to validate"],
+            ).model_dump(),
+        }
+
+    from codemedic.validation.diff import validate_diff
+
+    unified_diff = patch.get("unified_diff", "") if isinstance(patch, dict) else ""
+
+    allowed = state.get("allowed_files")
+    result = validate_diff(unified_diff, allowed_files=allowed)
+
+    return {"diff_validation": result}
 
 
 def final_report_node(state: RepairState) -> dict[str, Any]:

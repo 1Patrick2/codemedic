@@ -22,7 +22,7 @@ from codemedic.graph.routers import (
     SUFFICIENT,
     UNCERTAIN,
     evidence_gate_router,
-    human_review_router,
+    patch_review_router,
 )
 from codemedic.graph.state import RepairState, create_initial_state
 from codemedic.schemas.diagnosis import DiagnosisResult, Evidence
@@ -173,27 +173,27 @@ class TestFixerNode:
 # ── Human review router tests ────────────────────────────────────────────────
 
 
-class TestHumanReviewRouter:
+class TestPatchReviewRouter:
     def test_approved_routes_correctly(self, initial_state: RepairState) -> None:
         state = dict(initial_state)
         state["human_decision"] = "approved"
-        route = human_review_router(state)  # type: ignore[arg-type]
+        route = patch_review_router(state)  # type: ignore[arg-type]
         assert route == "approved"
 
     def test_rejected_routes_correctly(self, initial_state: RepairState) -> None:
         state = dict(initial_state)
         state["human_decision"] = "rejected"
-        route = human_review_router(state)  # type: ignore[arg-type]
+        route = patch_review_router(state)  # type: ignore[arg-type]
         assert route == "rejected"
 
     def test_retry_routes_correctly(self, initial_state: RepairState) -> None:
         state = dict(initial_state)
         state["human_decision"] = "retry"
-        route = human_review_router(state)  # type: ignore[arg-type]
+        route = patch_review_router(state)  # type: ignore[arg-type]
         assert route == "retry"
 
     def test_defaults_to_rejected(self, initial_state: RepairState) -> None:
-        route = human_review_router(initial_state)
+        route = patch_review_router(initial_state)
         assert route == "rejected"
 
 

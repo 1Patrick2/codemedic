@@ -20,6 +20,7 @@ from codemedic.graph.nodes import (
 from codemedic.graph.routers import (
     INSUFFICIENT,
     SUFFICIENT,
+    UNCERTAIN,
     evidence_gate_router,
     human_review_router,
 )
@@ -155,7 +156,8 @@ class TestEvidenceGate:
         state["diagnosis"] = diagnosis_low_conf
         state["retrieval_round"] = 2
         route = evidence_gate_router(state)  # type: ignore[arg-type]
-        assert route == SUFFICIENT  # proceed anyway
+        # Low confidence + no evidence + out of rounds → uncertain
+        assert route == UNCERTAIN
 
 
 # ── Fixer stub tests ─────────────────────────────────────────────────────────

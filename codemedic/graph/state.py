@@ -23,6 +23,8 @@ class RepairState(TypedDict):
     # ── Investigation ───────────────────────────────────────────────
     diagnosis: DiagnosisResult | None
     """Structured diagnosis produced by the Investigator agent."""
+    evidence_validation: dict[str, Any] | None
+    """Validation result from validate_evidence()."""
 
     # ── Fixer (stub in Stage 2) ─────────────────────────────────────
     patch: dict[str, Any] | None
@@ -72,6 +74,7 @@ def create_initial_state(
         repository_path=repository_path,
         retrieved_context=[],
         diagnosis=None,
+        evidence_validation=None,
         patch=None,
         test_results=[],
         allowed_files=[],

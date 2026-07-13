@@ -95,11 +95,16 @@ def hybrid_retrieve(state: RepairState) -> dict[str, Any]:
 def investigator_node(state: RepairState) -> dict[str, Any]:
     """Run the Investigator agent to diagnose the issue.
 
-    Uses the existing run_investigator function.
+    Uses the existing run_investigator function, then validates
+    the evidence against the actual filesystem.
 
     Returns:
-        Updated diagnosis and incremented investigation_steps.
+        Updated diagnosis, evidence_validation, and incremented
+        investigation_steps.
     """
+    from codemedic.tools.context import RepositoryContext
+    from codemedic.validation.evidence import validate_evidence
+
     tracer = LocalTracer(task_id=state["task_id"])
 
     diagnosis = run_investigator(
@@ -109,8 +114,20 @@ def investigator_node(state: RepairState) -> dict[str, Any]:
         trace=tracer,
     )
 
+    # Validate evidence against the actual filesystem
+    try:
+        ctx = RepositoryContext(Path(state["repository_path"]))
+        validation = validate_evidence(diagnosis, ctx)
+    except Exception as exc:
+        validation = {
+            "valid": False,
+            "errors": [f"Validation error: {exc}"],
+            "validated_evidence": [],
+        }
+
     return {
         "diagnosis": diagnosis,
+        "evidence_validation": validation,
         "investigation_steps": state.get("investigation_steps", 0) + 1,
     }
 

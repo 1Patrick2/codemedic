@@ -76,7 +76,9 @@ def list_repo_tree(repository_path: str, max_depth: int = 4) -> str:
                 continue
 
             indent = "  " * depth
-            if entry.is_dir():
+            if entry.is_symlink():
+                lines.append(f"{indent}{name} -> [symlink, skipped]")
+            elif entry.is_dir():
                 lines.append(f"{indent}{name}/")
                 lines.extend(_walk(entry, depth + 1))
             else:

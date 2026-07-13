@@ -19,20 +19,28 @@ RouteLabel = Literal["sufficient", "insufficient", "uncertain"]
 
 
 def evidence_gate_router(state: RepairState) -> RouteLabel:
-    """Route based on evidence sufficiency.
+    """Route based on evidence sufficiency and validation.
 
     Rules (in order):
       1. No diagnosis → INSUFFICIENT (need investigation)
-      2. Confidence < 0.6 and rounds left → INSUFFICIENT (retry)
-      3. No evidence items → INSUFFICIENT (need more data)
-      4. Missing information reported → UNCERTAIN (manual review)
-      5. All checks pass → SUFFICIENT (proceed to fixer)
+      2. Evidence validation failed → UNCERTAIN (manual review)
+      3. Confidence < 0.4 and rounds left → INSUFFICIENT (retry)
+      4. No evidence items → INSUFFICIENT (need more data)
+      5. Missing information reported → UNCERTAIN (manual review)
+      6. Low confidence with rounds left → INSUFFICIENT (retry)
+      7. Low confidence no rounds → UNCERTAIN
+      8. All checks pass → SUFFICIENT (proceed to fixer)
 
     All values are taken directly from state — no LLM calls.
     """
     diagnosis = state.get("diagnosis")
     if diagnosis is None:
         return INSUFFICIENT
+
+    # Evidence validation failed → route to manual review
+    validation = state.get("evidence_validation")
+    if validation and not validation.get("valid", True):
+        return UNCERTAIN
 
     # Very low confidence — insufficient evidence
     if diagnosis.confidence < 0.4:

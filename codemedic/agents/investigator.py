@@ -233,7 +233,12 @@ def run_investigator(
     )
 
     try:
-        result = agent.invoke({"messages": [{"role": "user", "content": user_message}]})
+        # Programmatic recursion limit — enforces max tool-calling rounds
+        recursion_limit = settings.max_investigation_steps * 2 + 5
+        result = agent.invoke(
+            {"messages": [{"role": "user", "content": user_message}]},
+            {"recursion_limit": recursion_limit},
+        )
 
         elapsed_ms = int((time.perf_counter() - start) * 1000)
         tracer.record_step(

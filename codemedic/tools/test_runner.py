@@ -3,19 +3,22 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
 from codemedic.config import settings
 
-# White-listed test commands
+# White-listed test commands — using sys.executable for conda compatibility
+PY = sys.executable  # ensures we use the current conda environment's Python
+
 ALLOWED_COMMANDS: list[list[str]] = [
-    ["python", "-m", "pytest"],
-    ["python", "-m", "pytest", "-v"],
-    ["python", "-m", "pytest", "-q"],
-    ["python", "-m", "ruff", "check"],
-    ["python", "-m", "mypy"],
-    ["python", "-m", "pip", "check"],
+    [PY, "-m", "pytest"],
+    [PY, "-m", "pytest", "-v"],
+    [PY, "-m", "pytest", "-q"],
+    [PY, "-m", "ruff", "check"],
+    [PY, "-m", "mypy"],
+    [PY, "-m", "pip", "check"],
 ]
 
 
@@ -70,7 +73,7 @@ def run_tests(
     max_output = settings.max_output_length
     results: list[dict[str, Any]] = []
 
-    cmd_list = commands or [["python", "-m", "pytest", "-q"]]
+    cmd_list = commands or [[PY, "-m", "pytest", "-q"]]
 
     for cmd in cmd_list:
         if not is_command_allowed(cmd):

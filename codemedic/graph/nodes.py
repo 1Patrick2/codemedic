@@ -125,9 +125,14 @@ def investigator_node(state: RepairState) -> dict[str, Any]:
             "validated_evidence": [],
         }
 
+    # Populate allowed_files from validated evidence
+    validated_evidence = validation.get("validated_evidence", [])
+    allowed_files = sorted({ev.file_path for ev in validated_evidence})
+
     return {
         "diagnosis": diagnosis,
         "evidence_validation": validation,
+        "allowed_files": allowed_files,
         "investigation_steps": state.get("investigation_steps", 0) + 1,
     }
 
@@ -167,8 +172,38 @@ def fixer_node(state: RepairState) -> dict[str, Any]:
             context=context_str,
         )
 
+        # Validate the diff against allowed_files
+        from codemedic.validation.diff import (
+            check_declared_files_match_diff,
+            validate_diff,
+        )
+
+        patch_dict = patch.model_dump()
+        allowed = state.get("allowed_files")
+        diff_result = validate_diff(
+            patch_dict.get("unified_diff", ""),
+            allowed_files=allowed,
+        )
+
+        mismatches = check_declared_files_match_diff(
+            patch_dict.get("modified_files", []),
+            patch_dict.get("unified_diff", ""),
+        )
+
+        errors: list[str] = []
+        if not diff_result["valid"]:
+            errors.extend(diff_result["errors"])
+        if mismatches:
+            errors.extend(mismatches)
+
+        if errors:
+            return {
+                "patch": patch_dict,
+                "errors": state.get("errors", []) + errors,
+            }
+
         return {
-            "patch": patch.model_dump(),
+            "patch": patch_dict,
             "retry_count": state.get("retry_count", 0) + 1,
         }
     except Exception as exc:
@@ -185,11 +220,23 @@ def human_review_node(state: RepairState) -> dict[str, Any]:
     for human review. When resumed, reads the human decision from
     Command.resume.
 
+    If retry count exceeds the maximum, skips the interrupt and
+    automatically routes to rejected.
+
     Returns:
         human_decision and review_reason from the interrupt response.
     """
     patch = state.get("patch")
     diag = state.get("diagnosis")
+
+    # Check retry limit — skip interrupt if exceeded
+    retry_count = state.get("retry_count", 0)
+    max_retries = settings.max_fixer_retries
+    if retry_count > max_retries:
+        return {
+            "human_decision": "rejected",
+            "review_reason": f"Retry limit ({max_retries}) exceeded",
+        }
 
     interrupt_value = {
         "message": "Please review the proposed patch.",
@@ -245,14 +292,31 @@ def final_report_node(state: RepairState) -> dict[str, Any]:
     }
 
     final_status: str | None = "通过"
+    decision = state.get("human_decision")
+
+    # User rejected → 拒绝
+    if decision == "rejected":
+        final_status = "拒绝"
+
+    # Check if sandbox/patch errors
+    elif any("Patch apply failed" in e for e in state.get("errors", [])):
+        final_status = "人工复核"
 
     # Check if tests failed
-    any_test_failed = any(
-        r.get("returncode", 0) != 0 for r in test_results
-    )
-    if state.get("errors"):
-        final_status = "人工复核"
-    elif test_results and any_test_failed:
+    elif test_results:
+        any_test_failed = any(
+            r.get("returncode", 0) != 0 for r in test_results
+        )
+        any_timed_out = any(
+            r.get("timed_out", False) for r in test_results
+        )
+        if any_timed_out:
+            final_status = "人工复核"
+        elif any_test_failed:
+            final_status = "人工复核"
+
+    # Non-patch errors
+    elif state.get("errors"):
         final_status = "人工复核"
 
     return {

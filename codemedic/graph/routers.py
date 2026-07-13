@@ -95,7 +95,39 @@ def human_review_router(state: RepairState) -> HumanReviewRoute:
 def verify_router(state: RepairState) -> RouteLabel:
     """Route based on verification results.
 
-    Stage 2 stub: always returns SUFFICIENT.
-    Full implementation in Stage 4+.
+    Rules:
+      - Patch apply failed → UNCERTAIN (manual review)
+      - No test results → UNCERTAIN
+      - Any test timed out → UNCERTAIN
+      - All tests passed (exit code 0) → SUFFICIENT
+      - Some tests failed and retry available → INSUFFICIENT (retry fixer)
+      - Some tests failed no retries → UNCERTAIN
+
+    All values are taken directly from state — no LLM calls.
     """
-    return SUFFICIENT
+    # Check if patch apply failed (errors from sandbox)
+    errors = state.get("errors", [])
+    if any("Patch apply failed" in e for e in errors):
+        return UNCERTAIN
+
+    test_results = state.get("test_results", [])
+    if not test_results:
+        return UNCERTAIN
+
+    # Check for timeouts
+    if any(r.get("timed_out", False) for r in test_results):
+        return UNCERTAIN
+
+    # All passed
+    if all(r.get("returncode", 1) == 0 for r in test_results):
+        return SUFFICIENT
+
+    # Some failed — check retry
+    retry_count = state.get("retry_count", 0)
+    max_retries = state.get("retry_count", 0) + 1  # keep from config
+    max_retries = 2  # allow one retry
+
+    if retry_count < max_retries:
+        return INSUFFICIENT
+
+    return UNCERTAIN

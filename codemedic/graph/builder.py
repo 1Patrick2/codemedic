@@ -123,10 +123,10 @@ def compile_workflow(*, checkpointer=None):
     """
     graph = build_workflow()
     cptr = checkpointer or _get_checkpointer()
-    return graph.compile(
-        checkpointer=cptr,
-        interrupt_before=["human_review"],
-    )
+    # NOTE: No interrupt_before — the human_review node calls
+    # interrupt() dynamically inside the node. Adding interrupt_before
+    # would create a redundant second interrupt.
+    return graph.compile(checkpointer=cptr)
 
 
 def run_workflow(

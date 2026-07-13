@@ -235,7 +235,13 @@ class TestWorkflowGraph:
     @patch("codemedic.agents.fixer.run_fixer")
     @patch("codemedic.graph.nodes.run_investigator")
     def test_workflow_runs_end_to_end(
-        self, mock_investigator, mock_fixer, mock_temp_copy, mock_apply, mock_run_tests, initial_state: RepairState
+        self,
+        mock_investigator,
+        mock_fixer,
+        mock_temp_copy,
+        mock_apply,
+        mock_run_tests,
+        initial_state: RepairState
     ) -> None:
         """Full workflow with mocked investigator, fixer, and sandbox."""
         mock_investigator.return_value = DiagnosisResult(

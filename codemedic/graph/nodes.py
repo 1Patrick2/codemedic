@@ -275,7 +275,6 @@ def final_report_node(state: RepairState) -> dict[str, Any]:
         final_report dict and final_status.
     """
     diag = state.get("diagnosis")
-    patch = state.get("patch")
     test_results = state.get("test_results", [])
     sandbox_path = state.get("sandbox_path")
     apply_errors = [

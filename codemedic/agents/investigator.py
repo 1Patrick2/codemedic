@@ -60,7 +60,6 @@ def _parse_text_diagnosis(text: str, issue: str) -> DiagnosisResult:
     """
     evidence_list: list[Evidence] = []
     lines = text.splitlines()
-    text_lower = text.lower()
 
     # Broader path patterns — matches .py, .yaml, .cpp, etc.
     file_paths = set(re.findall(
@@ -91,7 +90,10 @@ def _parse_text_diagnosis(text: str, issue: str) -> DiagnosisResult:
     missing_info: list[str] = []
     for line in lines:
         lower = line.lower()
-        if any(kw in lower for kw in ("missing information", "needed", "need more", "cannot determine", "not enough", "unable to")):
+        if any(kw in lower for kw in (
+            "missing information", "needed", "need more",
+            "cannot determine", "not enough", "unable to",
+        )):
             cleaned = line.strip().lstrip("-#* \t")
             if cleaned and len(cleaned) < 300:
                 missing_info.append(cleaned)

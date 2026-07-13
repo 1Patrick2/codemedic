@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Environment
+.env
+!.env.example
+
+# IDE
+.vscode/
+.idea/
+
+# Testing
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+htmlcov/
+
+# Runtime directories (local traces, checkpoints, sandboxes)
+runtime/checkpoints/
+runtime/traces/
+runtime/sandboxes/
+
+# OS
+Thumbs.db
+.DS_Store

@@ -58,13 +58,15 @@ class PatchApplyResult(BaseModel):
 class TestResult(BaseModel):
     """Result of a single test command execution."""
 
+    __test__ = False  # prevent pytest from collecting this as a test class
+
     command_id: str = Field(description="Identifier for this test command")
     argv: list[str] = Field(description="Full command argument list")
     returncode: int = Field(description="Exit code from the test process")
     stdout: str = Field(default="", description="Captured stdout (may be truncated)")
     stderr: str = Field(default="", description="Captured stderr (may be truncated)")
     timed_out: bool = Field(default=False, description="Whether the test timed out")
-    duration_ms: int = Field(default=0, description="Execution duration in milliseconds")
+    duration_ms: int = Field(default=0, ge=0, description="Execution duration in milliseconds")
     output_truncated: bool = Field(default=False, description="Whether output was truncated")
 
 
@@ -80,8 +82,8 @@ WorkflowStatus = Literal[
 class WorkflowRunResult(BaseModel):
     """Result returned to the caller after a workflow invocation."""
 
-    task_id: str = Field(description="Unique task identifier")
-    thread_id: str = Field(description="Thread ID for checkpoint resumption")
+    task_id: str = Field(min_length=1, description="Unique task identifier")
+    thread_id: str = Field(min_length=1, description="Thread ID for checkpoint resumption")
     workflow_status: WorkflowStatus = Field(description="Current workflow status")
     interrupted: bool = Field(description="Whether the workflow was interrupted")
     state: dict[str, Any] = Field(default_factory=dict, description="Full workflow state snapshot")

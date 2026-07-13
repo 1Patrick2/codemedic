@@ -143,8 +143,11 @@ def fixer_node(state: RepairState) -> dict[str, Any]:
     Reads the diagnosis and retrieved context, then calls the Fixer
     agent to generate a Unified Diff patch.
 
+    Only increments fix_attempt_count, NOT retry_count.
+    retry_count is only incremented by prepare_fix_retry.
+
     Returns:
-        Patch proposal and incremented retry_count (if this is a retry).
+        Patch proposal and incremented fix_attempt_count.
     """
     from codemedic.agents.fixer import run_fixer
 
@@ -155,7 +158,6 @@ def fixer_node(state: RepairState) -> dict[str, Any]:
             "errors": state.get("errors", []) + ["No diagnosis available for Fixer"],
         }
 
-    # Build context string from retrieved context
     context_parts = []
     for ctx in state.get("retrieved_context", []):
         if ctx.get("type") == "file":
@@ -172,7 +174,6 @@ def fixer_node(state: RepairState) -> dict[str, Any]:
             context=context_str,
         )
 
-        # Validate the diff against allowed_files
         from codemedic.validation.diff import (
             check_declared_files_match_diff,
             validate_diff,
@@ -204,13 +205,27 @@ def fixer_node(state: RepairState) -> dict[str, Any]:
 
         return {
             "patch": patch_dict,
-            "retry_count": state.get("retry_count", 0) + 1,
+            "fix_attempt_count": state.get("fix_attempt_count", 0) + 1,
         }
     except Exception as exc:
         return {
             "patch": None,
             "errors": state.get("errors", []) + [f"Fixer agent error: {exc}"],
         }
+
+
+def prepare_fix_retry(state: RepairState) -> dict[str, Any]:
+    """Prepare state for a fixer retry attempt.
+
+    Preserves the previous patch for feedback, increments retry_count,
+    and clears the current patch/diff for regeneration.
+    """
+    return {
+        "previous_patch": state.get("patch"),
+        "retry_count": state.get("retry_count", 0) + 1,
+        "patch": None,
+        "diff_validation": None,
+    }
 
 
 def diagnosis_review_node(state: RepairState) -> dict[str, Any]:
@@ -343,16 +358,20 @@ def patch_validation_node(state: RepairState) -> dict[str, Any]:
 def final_report_node(state: RepairState) -> dict[str, Any]:
     """Build the final report from the completed workflow.
 
+    Uses derive_final_status() for single-source-of-truth status.
+    Uses typed adapters for all result access.
+
     Returns:
         final_report dict and final_status.
     """
+    from codemedic.graph.status import derive_final_status
+    from codemedic.schemas.adapters import get_patch_apply_result
+
     diag = state.get("diagnosis")
     test_results = state.get("test_results", [])
-    sandbox_path = state.get("sandbox_path")
-    apply_errors = [
-        e for e in state.get("errors", [])
-        if "Patch apply" in e or "sandbox" in e.lower() or "No patch" in e
-    ]
+
+    apply_result = get_patch_apply_result(state)
+    patch_applied = apply_result is not None and apply_result.success
 
     report: dict[str, Any] = {
         "task_id": state["task_id"],
@@ -363,42 +382,11 @@ def final_report_node(state: RepairState) -> dict[str, Any]:
         "evidence_count": len(diag.evidence) if diag else 0,
         "investigation_steps": state.get("investigation_steps", 0),
         "retrieval_rounds": state.get("retrieval_round", 0),
-        # patch_applied = actual sandbox apply worked, not just "patch exists"
-        "patch_applied": sandbox_path is not None and not apply_errors,
+        "patch_applied": patch_applied,
         "test_count": len(test_results),
     }
 
-    final_status: str | None = None
-    decision = state.get("human_decision")
-
-    # User rejected → 拒绝
-    if decision == "rejected":
-        final_status = "拒绝"
-
-    # Check if sandbox/patch errors
-    if apply_errors:
-        final_status = "人工复核"
-
-    # Check if tests failed (only if we got test results)
-    if test_results:
-        any_timed_out = any(
-            r.get("timed_out", False) for r in test_results
-        )
-        any_test_failed = any(
-            r.get("returncode", 0) != 0 for r in test_results
-        )
-        if any_timed_out or any_test_failed:
-            final_status = "人工复核"
-        elif final_status is None:
-            final_status = "通过"
-
-    # Generic errors
-    if final_status is None and state.get("errors"):
-        final_status = "人工复核"
-
-    # Last resort
-    if final_status is None:
-        final_status = "人工复核"
+    final_status = derive_final_status(state)
 
     return {
         "final_report": report,
@@ -412,73 +400,96 @@ def apply_patch_node(state: RepairState) -> dict[str, Any]:
     """Apply the patch in a sandbox (temp copy of the repo).
 
     Creates a temporary copy, applies the Unified Diff, and records
-    the sandbox path for subsequent test execution.
+    the PatchApplyResult in state.
 
     Returns:
-        sandbox_path and any errors.
+        patch_apply_result and sandbox_path (on success).
     """
+    from codemedic.schemas.results import PatchApplyResult
     from codemedic.tools.sandbox import apply_patch, create_temp_copy, verify_patch_boundaries
 
     patch = state.get("patch")
     if patch is None:
-        return {"errors": state.get("errors", []) + ["No patch to apply"]}
+        result = PatchApplyResult(
+            success=False, returncode=-1,
+            stderr="No patch to apply",
+            modified_files=[], sandbox_path=None,
+        )
+        return {"patch_apply_result": result.model_dump()}
 
     unified_diff = patch.get("unified_diff", "") if isinstance(patch, dict) else ""
     if not unified_diff:
-        return {"errors": state.get("errors", []) + ["Patch has no diff content"]}
+        result = PatchApplyResult(
+            success=False, returncode=-1,
+            stderr="Patch has no diff content",
+            modified_files=[], sandbox_path=None,
+        )
+        return {"patch_apply_result": result.model_dump()}
 
     # Verify patch boundaries
     allowed = state.get("allowed_files")
     boundary_check = verify_patch_boundaries(unified_diff, allowed)
     if not boundary_check["valid"]:
-        return {
-            "errors": state.get("errors", []) + [
-                f"Patch violates boundaries: {boundary_check['violations']}"
-            ],
-        }
+        result = PatchApplyResult(
+            success=False, returncode=-1,
+            stderr=f"Patch violates boundaries: {boundary_check['violations']}",
+            modified_files=[], sandbox_path=None,
+        )
+        return {"patch_apply_result": result.model_dump()}
 
     try:
         sandbox_path = create_temp_copy(state["repository_path"])
-        result = apply_patch(sandbox_path, unified_diff)
+        raw = apply_patch(sandbox_path, unified_diff)
 
-        if not result["success"]:
-            from codemedic.tools.sandbox import cleanup_sandbox
-            cleanup_sandbox(sandbox_path)
-            return {
-                "errors": state.get("errors", []) + [
-                    f"Patch apply failed: {result['stderr'][:200]}"
-                ],
-            }
+        result = PatchApplyResult(
+            success=raw["success"],
+            returncode=raw["returncode"],
+            stdout=raw.get("stdout", ""),
+            stderr=raw.get("stderr", ""),
+            modified_files=raw.get("modified_files", []),
+            sandbox_path=sandbox_path if raw["success"] else None,
+        )
 
         return {
-            "sandbox_path": sandbox_path,
+            "patch_apply_result": result.model_dump(),
+            "sandbox_path": result.sandbox_path,
         }
     except Exception as exc:
-        return {
-            "errors": state.get("errors", []) + [f"Sandbox error: {exc}"],
-        }
+        result = PatchApplyResult(
+            success=False, returncode=-1,
+            stderr=str(exc),
+            modified_files=[], sandbox_path=None,
+        )
+        return {"patch_apply_result": result.model_dump()}
 
 
 def run_tests_node(state: RepairState) -> dict[str, Any]:
     """Run test commands in the sandbox.
 
     Returns:
-        test_results with command outputs.
+        test_results with TestResult objects serialized to dicts.
     """
     from codemedic.tools.test_runner import run_tests
 
     sandbox_path = state.get("sandbox_path")
     if not sandbox_path:
-        return {"errors": state.get("errors", []) + ["No sandbox path for tests"]}
+        from codemedic.schemas.results import TestResult
+        err_result = TestResult(
+            command_id="init", argv=["error"],
+            returncode=-1, stderr="No sandbox path for tests",
+        )
+        return {"test_results": [err_result.model_dump()]}
 
     try:
         results = run_tests(str(sandbox_path))
-        return {"test_results": results}
+        return {"test_results": [r.model_dump() for r in results]}
     except Exception as exc:
-        return {
-            "test_results": [],
-            "errors": state.get("errors", []) + [f"Test execution error: {exc}"],
-        }
+        from codemedic.schemas.results import TestResult
+        err_result = TestResult(
+            command_id="error", argv=["error"],
+            returncode=-1, stderr=f"Test execution error: {exc}",
+        )
+        return {"test_results": [err_result.model_dump()]}
 
 
 def verifier_node(state: RepairState) -> dict[str, Any]:

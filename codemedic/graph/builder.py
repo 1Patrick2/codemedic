@@ -22,17 +22,20 @@ from codemedic.graph.nodes import (
     investigator_node,
     patch_review_node,
     patch_validation_node,
+    prepare_fix_retry,
     run_tests_node,
     verifier_node,
 )
 from codemedic.graph.routers import (
     diagnosis_review_router,
     evidence_gate_router,
+    patch_apply_router,
     patch_review_router,
     patch_validation_router,
     verify_router,
 )
 from codemedic.graph.state import RepairState
+from codemedic.schemas.results import WorkflowRunResult
 
 
 def _get_checkpointer():
@@ -57,6 +60,7 @@ def build_workflow() -> StateGraph:
     graph.add_node("fixer_agent", fixer_node)
     graph.add_node("patch_validation", patch_validation_node)
     graph.add_node("patch_review", patch_review_node)
+    graph.add_node("prepare_fix_retry", prepare_fix_retry)
     graph.add_node("apply_patch", apply_patch_node)
     graph.add_node("run_tests", run_tests_node)
     graph.add_node("verifier_agent", verifier_node)
@@ -91,30 +95,40 @@ def build_workflow() -> StateGraph:
 
     graph.add_edge("fixer_agent", "patch_validation")
 
-    # Patch validation gate → valid (review), invalid+retry (fixer), invalid+final
+    # Patch validation gate → valid (review), invalid+retry (prepare), invalid+final
     graph.add_conditional_edges(
         "patch_validation",
         patch_validation_router,
         {
             "valid": "patch_review",
-            "invalid_retry": "fixer_agent",
+            "invalid_retry": "prepare_fix_retry",
             "invalid_final": "diagnosis_review",
         },
     )
 
-    # Patch review → approve (apply), reject (end), retry (fixer)
+    # Prepare fix retry → fixer
+    graph.add_edge("prepare_fix_retry", "fixer_agent")
+
+    # Patch review → approve (apply), reject (end), retry (prepare)
     graph.add_conditional_edges(
         "patch_review",
         patch_review_router,
         {
             "approved": "apply_patch",
             "rejected": "final_report",
-            "retry": "fixer_agent",
+            "retry": "prepare_fix_retry",
         },
     )
 
-    # Sandbox → Tests → Verifier
-    graph.add_edge("apply_patch", "run_tests")
+    # Patch apply → success (tests), failed (end)
+    graph.add_conditional_edges(
+        "apply_patch",
+        patch_apply_router,
+        {
+            "success": "run_tests",
+            "failed": "final_report",
+        },
+    )
     graph.add_edge("run_tests", "verifier_agent")
 
     # Verify router
@@ -123,7 +137,7 @@ def build_workflow() -> StateGraph:
         verify_router,
         {
             "sufficient": "final_report",
-            "insufficient": "fixer_agent",
+            "insufficient": "prepare_fix_retry",
             "uncertain": "final_report",
         },
     )
@@ -146,11 +160,11 @@ def run_workflow(
     error_log: str | None = None,
     *,
     thread_id: str | None = None,
-) -> dict:
-    """Convenience function to run the full workflow.
+) -> "WorkflowRunResult":
+    """Run the full workflow and return a structured result.
 
     NOTE: Will pause at patch_review or diagnosis_review due to interrupt.
-    Use resume_workflow() to continue with a decision.
+    Use resume_workflow() to continue.
 
     Args:
         issue: Issue description.
@@ -159,23 +173,27 @@ def run_workflow(
         thread_id: Optional thread ID for resumption.
 
     Returns:
-        The final state dict after workflow completion (or interrupt state).
+        WorkflowRunResult with thread_id, status, and state snapshot.
     """
     import uuid
 
     from codemedic.graph.state import create_initial_state
+
+    # Generate thread_id BEFORE creating state or config — ensures consistency
+    tid = thread_id or str(uuid.uuid4())
 
     agent = compile_workflow()
     initial = create_initial_state(
         issue=issue,
         repository_path=repository_path,
         error_log=error_log,
+        thread_id=tid,
     )
-    tid = thread_id or str(uuid.uuid4())
     config = {"configurable": {"thread_id": tid}}
 
     result = agent.invoke(initial, config)
-    return dict(result)
+
+    return _make_workflow_result(result, tid)
 
 
 def resume_workflow(
@@ -183,20 +201,55 @@ def resume_workflow(
     reason: str = "",
     *,
     thread_id: str,
-) -> dict:
+) -> "WorkflowRunResult":
     """Resume a paused workflow with a human review decision.
 
     Args:
-        decision: 'approved', 'rejected', or 'retry'.
+        decision: 'approved', 'rejected', 'retry', or 'accept_diagnosis'.
         reason: Optional reason for the decision.
         thread_id: Thread ID of the paused workflow.
 
     Returns:
-        The final state dict after resumption.
+        WorkflowRunResult with thread_id, status, and state snapshot.
     """
     agent = compile_workflow()
     config = {"configurable": {"thread_id": thread_id}}
 
     command: Command = Command(resume={"decision": decision, "reason": reason})
     result = agent.invoke(command, config)
-    return dict(result)
+
+    return _make_workflow_result(result, thread_id)
+
+
+def _make_workflow_result(state: dict, tid: str) -> "WorkflowRunResult":
+    """Build a WorkflowRunResult from workflow state dict and thread_id."""
+    interrupted = "__interrupt__" in state
+
+    # Determine workflow status from state
+    if interrupted:
+        interrupt_payload = state["__interrupt__"]
+        if interrupt_payload and len(interrupt_payload) > 0:
+            review_type = interrupt_payload[0].value.get("review_type", "unknown")
+            if review_type == "diagnosis":
+                workflow_status = "waiting_diagnosis_review"
+            elif review_type == "patch":
+                workflow_status = "waiting_patch_review"
+            else:
+                workflow_status = "failed"
+        else:
+            workflow_status = "failed"
+    else:
+        # Check if there was a fatal error
+        final_status = state.get("final_status")
+        if final_status is not None:
+            workflow_status = "completed"
+        else:
+            workflow_status = "failed"
+
+    return WorkflowRunResult(
+        task_id=state.get("task_id", "unknown"),
+        thread_id=tid,
+        workflow_status=workflow_status,  # type: ignore[arg-type]
+        interrupted=interrupted,
+        state=dict(state),
+    )

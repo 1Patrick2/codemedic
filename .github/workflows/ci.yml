@@ -31,7 +31,6 @@ jobs:
 
       - name: Type check with mypy
         run: mypy codemedic
-        continue-on-error: true  # mypy may have third-party type issues
 
       - name: Test with pytest
         run: pytest -q

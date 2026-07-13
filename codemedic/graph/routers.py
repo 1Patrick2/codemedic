@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Literal
 
+from codemedic.config import settings
 from codemedic.graph.state import RepairState
 
 # Route labels — typed as Literal so mypy can verify return types
@@ -77,6 +78,21 @@ HumanReviewRoute = Literal["approved", "rejected", "retry"]
 DiagnosisReviewRoute = Literal["accept_diagnosis", "reject"]
 PatchValidationRoute = Literal["valid", "invalid_retry", "invalid_final"]
 
+PatchApplyRoute = Literal["success", "failed"]
+
+
+def patch_apply_router(state: RepairState) -> PatchApplyRoute:
+    """Route based on patch apply result.
+
+    Rules:
+      - PatchApplyResult exists and success → run tests
+      - Otherwise → final report
+    """
+    apply_result = state.get("patch_apply_result")
+    if apply_result and apply_result.get("success"):
+        return "success"
+    return "failed"
+
 
 def diagnosis_review_router(state: RepairState) -> DiagnosisReviewRoute:
     """Route based on diagnosis review decision.
@@ -113,15 +129,27 @@ def patch_validation_router(state: RepairState) -> PatchValidationRoute:
     """Route based on diff validation result.
 
     Rules:
+      - No diff_validation → invalid_final (fail closed)
       - Diff valid → patch_review
       - Invalid with retry left → fixer_agent
       - Invalid no retry → diagnosis_review
 
     All values from state — no LLM calls.
     """
-    diff_val = state.get("diff_validation", {})
-    if not diff_val or diff_val.get("valid", False):
+    diff_val = state.get("diff_validation")
+
+    # No validation result must fail closed
+    if not diff_val:
+        return "invalid_final"
+
+    if diff_val.get("valid") is True:
         return "valid"
+
+    retry_count = state.get("retry_count", 0)
+    if retry_count < settings.max_fixer_retries:
+        return "invalid_retry"
+
+    return "invalid_final"
 
     retry_count = state.get("retry_count", 0)
     return "invalid_retry" if retry_count < 2 else "invalid_final"
@@ -159,10 +187,7 @@ def verify_router(state: RepairState) -> RouteLabel:
 
     # Some failed — check retry
     retry_count = state.get("retry_count", 0)
-    max_retries = state.get("retry_count", 0) + 1  # keep from config
-    max_retries = 2  # allow one retry
-
-    if retry_count < max_retries:
+    if retry_count < settings.max_fixer_retries:
         return INSUFFICIENT
 
     return UNCERTAIN

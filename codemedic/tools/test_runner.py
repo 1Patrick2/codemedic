@@ -4,15 +4,16 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import time
 from pathlib import Path
-from typing import Any
 
 from codemedic.config import settings
+from codemedic.schemas.results import TestResult
 
 # White-listed test commands — using sys.executable for conda compatibility
-PY = sys.executable  # ensures we use the current conda environment's Python
+PY = sys.executable
 
-ALLOWED_COMMANDS: list[list[str]] = [
+_ALLOWED_COMMANDS: list[list[str]] = [
     [PY, "-m", "pytest"],
     [PY, "-m", "pytest", "-v"],
     [PY, "-m", "pytest", "-q"],
@@ -23,15 +24,7 @@ ALLOWED_COMMANDS: list[list[str]] = [
 
 
 def is_command_allowed(command: list[str]) -> bool:
-    """Check if a command is in the allowed list.
-
-    Args:
-        command: The command as a list of strings (subprocess style).
-
-    Returns:
-        True if the command is allowed.
-    """
-    for allowed in ALLOWED_COMMANDS:
+    for allowed in _ALLOWED_COMMANDS:
         if command == allowed:
             return True
     return False
@@ -42,79 +35,75 @@ def run_tests(
     commands: list[list[str]] | None = None,
     *,
     timeout: int | None = None,
-) -> list[dict[str, Any]]:
+) -> list[TestResult]:
     """Execute whitelist test commands in the repository.
 
     Args:
         repo_path: Path to the repository root (sandbox copy).
-        commands: List of commands to run. Each command is a list of strings.
-            If None, runs a default pytest.
+        commands: List of commands to run. None = default pytest.
         timeout: Timeout per command in seconds. Defaults to config value.
 
     Returns:
-        List of result dicts, each with:
-          command: str
-          returncode: int
-          stdout: str (truncated)
-          stderr: str (truncated)
-          timed_out: bool
+        List of TestResult objects.
     """
     repo = Path(repo_path).resolve()
     if not repo.is_dir():
-        return [{
-            "command": str(commands),
-            "returncode": -1,
-            "stdout": "",
-            "stderr": f"Repository not found: {repo_path}",
-            "timed_out": False,
-        }]
+        return [TestResult(
+            command_id="init",
+            argv=["error"],
+            returncode=-1,
+            stderr=f"Repository not found: {repo_path}",
+        )]
 
     timeout_s = timeout or settings.test_timeout_seconds
     max_output = settings.max_output_length
-    results: list[dict[str, Any]] = []
+    results: list[TestResult] = []
 
     cmd_list = commands or [[PY, "-m", "pytest", "-q"]]
 
-    for cmd in cmd_list:
+    for cmd_id, cmd in enumerate(cmd_list):
         if not is_command_allowed(cmd):
-            results.append({
-                "command": " ".join(cmd),
-                "returncode": -1,
-                "stdout": "",
-                "stderr": f"Command not in whitelist: {' '.join(cmd)}",
-                "timed_out": False,
-            })
+            results.append(TestResult(
+                command_id=f"cmd_{cmd_id}",
+                argv=list(cmd),
+                returncode=-1,
+                stderr=f"Command not in whitelist: {' '.join(cmd)}",
+            ))
             continue
 
+        start_time = time.perf_counter()
         timed_out = False
+
         try:
             proc = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                cwd=repo,
+                cmd, capture_output=True, text=True, cwd=repo,
                 timeout=timeout_s,
             )
             returncode = proc.returncode
-            stdout = proc.stdout or ""
-            stderr = proc.stderr or ""
+            raw_stdout = proc.stdout or ""
+            raw_stderr = proc.stderr or ""
         except subprocess.TimeoutExpired:
             returncode = -1
-            stdout = ""
-            stderr = f"Command timed out after {timeout_s}s"
+            raw_stdout = ""
+            raw_stderr = f"Command timed out after {timeout_s}s"
             timed_out = True
         except FileNotFoundError as exc:
             returncode = -1
-            stdout = ""
-            stderr = str(exc)
-            timed_out = False
+            raw_stdout = ""
+            raw_stderr = str(exc)
 
-        results.append({
-            "command": " ".join(cmd),
-            "returncode": returncode,
-            "stdout": stdout[:max_output],
-            "stderr": stderr[:max_output],
-            "timed_out": timed_out,
-        })
+        duration_ms = int((time.perf_counter() - start_time) * 1000)
+        truncated = len(raw_stdout) > max_output or len(raw_stderr) > max_output
+
+        results.append(TestResult(
+            command_id=f"cmd_{cmd_id}",
+            argv=list(cmd),
+            returncode=returncode,
+            stdout=raw_stdout[:max_output],
+            stderr=raw_stderr[:max_output],
+            timed_out=timed_out,
+            duration_ms=duration_ms,
+            output_truncated=truncated,
+        ))
 
     return results

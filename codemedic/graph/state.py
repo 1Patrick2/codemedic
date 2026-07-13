@@ -59,6 +59,8 @@ class RepairState(TypedDict):
     """Number of retrieval rounds so far."""
     retry_count: int
     """Number of fix→verify retries so far."""
+    fix_attempt_count: int
+    """Total number of fixer invocations (including first attempt)."""
 
     # ── Human review ────────────────────────────────────────────────
     human_decision: str | None
@@ -109,6 +111,7 @@ def create_initial_state(
         investigation_steps=0,
         retrieval_round=0,
         retry_count=0,
+        fix_attempt_count=0,
         human_decision=None,
         review_reason=None,
         final_status=None,

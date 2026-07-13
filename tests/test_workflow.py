@@ -282,13 +282,13 @@ class TestWorkflowGraph:
         )
         mock_temp_copy.return_value = "/tmp/sandbox_test"
         mock_apply.return_value = {"success": True, "stdout": "", "stderr": "", "returncode": 0}
-        mock_run_tests.return_value = [{
-            "command": "python -m pytest -q",
-            "returncode": 0,
-            "stdout": "all tests passed",
-            "stderr": "",
-            "timed_out": False,
-        }]
+        from codemedic.schemas.results import TestResult
+        mock_run_tests.return_value = [TestResult(
+            command_id="test_0",
+            argv=["python", "-m", "pytest", "-q"],
+            returncode=0,
+            stdout="all tests passed",
+        )]
 
         from langgraph.checkpoint.memory import MemorySaver
         from langgraph.types import Command
@@ -300,6 +300,10 @@ class TestWorkflowGraph:
 
         # First invoke pauses at human_review
         result = agent.invoke(initial_state, config)
+
+        # Check review type
+        interrupt_payload = result["__interrupt__"][0].value
+        assert interrupt_payload["review_type"] == "patch"  # must be patch review
 
         # Resume with 'approved' decision
         result = agent.invoke(Command(resume={"decision": "approved"}), config)
@@ -357,5 +361,5 @@ class TestWorkflowReal:
             issue="Find all bugs in the sample project",
             repository_path=DEMO_REPO,
         )
-        assert result["final_status"] == "通过"
-        assert result["diagnosis"] is not None
+        assert result.state["final_status"] == "通过"
+        assert result.state["diagnosis"] is not None

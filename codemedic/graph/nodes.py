@@ -277,6 +277,11 @@ def final_report_node(state: RepairState) -> dict[str, Any]:
     diag = state.get("diagnosis")
     patch = state.get("patch")
     test_results = state.get("test_results", [])
+    sandbox_path = state.get("sandbox_path")
+    apply_errors = [
+        e for e in state.get("errors", [])
+        if "Patch apply" in e or "sandbox" in e.lower() or "No patch" in e
+    ]
 
     report: dict[str, Any] = {
         "task_id": state["task_id"],
@@ -287,11 +292,12 @@ def final_report_node(state: RepairState) -> dict[str, Any]:
         "evidence_count": len(diag.evidence) if diag else 0,
         "investigation_steps": state.get("investigation_steps", 0),
         "retrieval_rounds": state.get("retrieval_round", 0),
-        "patch_applied": patch is not None,
+        # patch_applied = actual sandbox apply worked, not just "patch exists"
+        "patch_applied": sandbox_path is not None and not apply_errors,
         "test_count": len(test_results),
     }
 
-    final_status: str | None = "通过"
+    final_status: str | None = None
     decision = state.get("human_decision")
 
     # User rejected → 拒绝
@@ -299,24 +305,28 @@ def final_report_node(state: RepairState) -> dict[str, Any]:
         final_status = "拒绝"
 
     # Check if sandbox/patch errors
-    elif any("Patch apply failed" in e for e in state.get("errors", [])):
+    if apply_errors:
         final_status = "人工复核"
 
-    # Check if tests failed
-    elif test_results:
-        any_test_failed = any(
-            r.get("returncode", 0) != 0 for r in test_results
-        )
+    # Check if tests failed (only if we got test results)
+    if test_results:
         any_timed_out = any(
             r.get("timed_out", False) for r in test_results
         )
-        if any_timed_out:
+        any_test_failed = any(
+            r.get("returncode", 0) != 0 for r in test_results
+        )
+        if any_timed_out or any_test_failed:
             final_status = "人工复核"
-        elif any_test_failed:
-            final_status = "人工复核"
+        elif final_status is None:
+            final_status = "通过"
 
-    # Non-patch errors
-    elif state.get("errors"):
+    # Generic errors
+    if final_status is None and state.get("errors"):
+        final_status = "人工复核"
+
+    # Last resort
+    if final_status is None:
         final_status = "人工复核"
 
     return {

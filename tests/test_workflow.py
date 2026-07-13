@@ -229,22 +229,25 @@ class TestWorkflowGraph:
         compiled = graph.compile()
         assert compiled is not None
 
+    @patch("codemedic.tools.test_runner.run_tests")
+    @patch("codemedic.tools.sandbox.apply_patch")
+    @patch("codemedic.tools.sandbox.create_temp_copy")
     @patch("codemedic.agents.fixer.run_fixer")
     @patch("codemedic.graph.nodes.run_investigator")
     def test_workflow_runs_end_to_end(
-        self, mock_investigator, mock_fixer, initial_state: RepairState
+        self, mock_investigator, mock_fixer, mock_temp_copy, mock_apply, mock_run_tests, initial_state: RepairState
     ) -> None:
-        """Full workflow with mocked investigator and fixer."""
+        """Full workflow with mocked investigator, fixer, and sandbox."""
         mock_investigator.return_value = DiagnosisResult(
             suspected_files=["src/utils/math_helpers.py"],
-            root_cause="Variable name typo",
+            root_cause="Variable name typo in factorial()",
             evidence=[
                 Evidence(
                     file_path="src/utils/math_helpers.py",
                     line_start=40,
                     line_end=43,
-                    excerpt="resut vs result",
-                    reason="NameError due to typo",
+                    excerpt="resut = 1",
+                    reason="NameError due to typo: resut should be result",
                 )
             ],
             confidence=0.85,
@@ -256,12 +259,30 @@ class TestWorkflowGraph:
             unified_diff="\n".join([
                 "--- a/src/utils/math_helpers.py",
                 "+++ b/src/utils/math_helpers.py",
-                "@@ -40,3 +40,3 @@ def factorial",
+                "@@ -40,6 +40,6 @@ def factorial(n: int) -> int:",
+                "     if n == 0:",
+                "         return 1",
+                "-    resut = 1",
+                "+    result = 1",
+                "     for i in range(1, n + 1):",
+                "-        resut *= i",
+                "+        result *= i",
+                "-    return resut",
+                "+    return result",
             ]),
             rationale="Fix variable name typo",
             risks=["Low risk - simple rename"],
             test_suggestions=["python -m pytest tests/"],
         )
+        mock_temp_copy.return_value = "/tmp/sandbox_test"
+        mock_apply.return_value = {"success": True, "stdout": "", "stderr": "", "returncode": 0}
+        mock_run_tests.return_value = [{
+            "command": "python -m pytest -q",
+            "returncode": 0,
+            "stdout": "all tests passed",
+            "stderr": "",
+            "timed_out": False,
+        }]
 
         from langgraph.checkpoint.memory import MemorySaver
         from langgraph.types import Command
@@ -277,7 +298,7 @@ class TestWorkflowGraph:
         # Resume with 'approved' decision
         result = agent.invoke(Command(resume={"decision": "approved"}), config)
 
-        assert result["final_status"] in ("通过", "人工复核")  # may fail tests in sandbox
+        assert result["final_status"] == "通过"
         assert result["final_report"] is not None
         assert result["diagnosis"] is not None
         assert result["diagnosis"].confidence == 0.85

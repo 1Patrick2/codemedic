@@ -34,16 +34,18 @@ Investigator → Fixer → Human Review → Sandbox → Verifier 闭环，覆盖
 
 ## 当前状态
 
-已实现 Stage 0~4，并经 Phase A 稳定化加固：
+已完成 CodeMedic 三 Agent 工作流骨架以及仓库路径、Evidence、Diff、测试命令等基础安全约束；当前正在完善 Structured Output、Checkpoint 恢复、失败反馈重试及端到端验证。
 
 | 阶段 | 内容 | 状态 |
 |------|------|------|
-| Stage 0 | 环境、依赖、项目骨架 | ✅ |
-| Stage 1 | Investigator 单 Agent 基线（4 只读工具 + CLI + Trace） | ✅ |
-| Stage 2 | LangGraph StateGraph 外层工作流（Evidence Gate 条件路由） | ✅ |
-| Stage 3 | Fixer（Unified Diff）+ Human Review（Interrupt + Checkpoint） | ✅ |
-| Stage 4 | Sandbox（临时副本）+ Verifier（测试总结） | ✅ |
-| Phase A | 安全边界加固、Evidence 验证、Diff 校验、Verify Router | ✅ |
+| Stage 0 | 环境、依赖、项目骨架 | ✅ 基本完成 |
+| Stage 1 | Investigator 工具 + CLI + Trace | ⚠️ 工具可用，Structured Output 未完成 |
+| Stage 2 | LangGraph StateGraph + Evidence Gate | ✅ 基本完成 |
+| Stage 3 | Fixer + Human Review (Interrupt) | ⚠️ Interrupt 可用，Resume 接口不完整 |
+| Stage 4 | Sandbox + Test Runner + Verifier | ⚠️ git apply 和 Test Runner 可用，安全与状态判定未闭合 |
+| Phase A | 安全加固 | 🔄 进行中 |
+
+> 当前项目适合作为工程演示和技术面试的原型展示，不适合直接用于生产环境或不可信的第三方代码。
 
 ## 快速开始
 
@@ -116,17 +118,9 @@ codemedic/
 
 ## 模型支持
 
-当前通过 OpenAI-compatible API 使用模型。已测试：
+当前通过 OpenAI-compatible API 使用模型（已测试 DeepSeek V4 Flash via OpenCode Go）。
 
-- **DeepSeek V4 Flash**（OpenCode Go 套餐）- 不支持原生 Structured Output，采用文本提示 + Pydantic 校验降级路径
-
-Provider 能力自动检测：
-
-| 能力 | 支持 | 降级 |
-|------|------|------|
-| Tool Calling | ✅ | — |
-| Structured Output | ⚠️ 依赖 Provider | 二次模型调用转换 Schema |
-| Token Usage | ⚠️ 依赖 Provider | None |
+> **注意**：当前 Console Go 套餐不支持原生 Structured Output，Investigator 采用文本提示 + 正则解析方式提取诊断结果。解析失败时 confidence=0，路由到人工复核。这不是完整的 Structured Output 实现，后续接入支持 `response_format` 的 Provider 后将升级到 `langchain.agents.create_agent(response_format=DiagnosisResult)`。
 
 ## 安全边界
 
@@ -134,8 +128,8 @@ Provider 能力自动检测：
 - 路径穿越保护、绝对路径拒绝、UNC 路径拒绝、符号链接逃逸保护
 - 文件大小限制（512KB）、二进制文件自动检测
 - Unified Diff 校验：仅允许修改已验证证据中的文件、禁止删除/创建文件、禁止 .git 目录
-- 测试白名单：仅允许 pytest / ruff / mypy / pip check，使用 `sys.executable` 确保 Conda 环境一致
-- 沙盒：临时副本中应用 Patch，原仓库不受影响
+- 测试白名单：仅允许 pytest / ruff / mypy / pip check
+- 沙盒：临时仓库副本与 Patch 隔离机制，仅应对可信 Demo 仓库运行测试。**不是操作系统级安全沙箱**，不隔离网络、文件系统或进程的越权访问
 - Human Review：仅三种结果（批准/拒绝/重试），重试次数超限自动结束
 
 ## 当前限制

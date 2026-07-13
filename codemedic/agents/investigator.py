@@ -60,9 +60,15 @@ def _parse_text_diagnosis(text: str, issue: str) -> DiagnosisResult:
     """
     evidence_list: list[Evidence] = []
     lines = text.splitlines()
+    text_lower = text.lower()
 
-    # Extract all suspected .py file paths mentioned
-    file_paths = set(re.findall(r'(?:src|tests|demo_repos)/[\w/\\\-\.]+\.py', text))
+    # Broader path patterns — matches .py, .yaml, .cpp, etc.
+    file_paths = set(re.findall(
+        r'(?:[\w/\\\-]+)?(?:src|tests|demo_repos|scripts|config|app|main|package|services|nodes|utils)/?[\w/\\\-]*\.(?:py|yaml|yml|json|xml|md|txt|cpp|h|hpp|launch)',
+        text,
+    ))
+    # Also match paths starting with just a filename (app.py, main.py, etc.)
+    file_paths |= set(re.findall(r'(?<!\w)([\w\-]+\.py)(?!\w)', text))
 
     # Try to extract evidence: "File: xxx.py:40" or "`xxx.py` line 40"
     for fpath in file_paths:
@@ -73,36 +79,26 @@ def _parse_text_diagnosis(text: str, issue: str) -> DiagnosisResult:
                 start = int(nums[0]) if nums else None
                 evidence_list.append(
                     Evidence(
-                        file_path=fpath,
+                        file_path=fpath.strip().strip("`").strip("*"),
                         line_start=start,
                         line_end=start,
-                        excerpt=line.strip()[:200],
+                        excerpt="",
                         reason="Identified during investigation",
                     )
                 )
 
-    # Also find line numbers in markdown bold like **Line 40**
-    if not any(e.line_start for e in evidence_list):
-        md_pattern = (
-            r'(?:`([^`]+\.py)`|[*-]+\s*\*\*?([^*]+)\*\*?\s*:?)\s*'
-            r'(?:line\s*(\d+))?'
-        )
-        for match in re.finditer(md_pattern, text, re.IGNORECASE):
-            path = match.group(1) or match.group(2) or ""
-            if ".py" in path and not path.startswith("test_"):
-                line_num = match.group(3)
-                start = int(line_num) if line_num else None
-                exists = any(e.file_path == path for e in evidence_list)
-                if not exists:
-                    evidence_list.append(
-                        Evidence(
-                            file_path=path.strip().strip("`").strip("*"),
-                            line_start=start,
-                            line_end=start,
-                            excerpt="",
-                            reason="Mentioned in analysis",
-                        )
-                    )
+    # Extract missing_information — look for "missing" or "need" in text
+    missing_info: list[str] = []
+    for line in lines:
+        lower = line.lower()
+        if any(kw in lower for kw in ("missing information", "needed", "need more", "cannot determine", "not enough", "unable to")):
+            cleaned = line.strip().lstrip("-#* \t")
+            if cleaned and len(cleaned) < 300:
+                missing_info.append(cleaned)
+        elif "missing" in lower and "?" in line:
+            cleaned = line.strip().lstrip("-#* \t")
+            if cleaned and len(cleaned) < 300:
+                missing_info.append(cleaned)
 
     # Try to find confidence as a decimal number
     confidence = 0.0  # must be provided by model — no default high
@@ -114,12 +110,22 @@ def _parse_text_diagnosis(text: str, issue: str) -> DiagnosisResult:
         except ValueError:
             pass
 
-    # Use the Analysis section as root cause
+    # Extract root cause — skip header/title lines, find first substantive sentence
     root_cause = issue
+    skip_prefixes = (
+        "##", "#", "---", "===", "**", "* ", "- ", "diagnos", "investigat",
+        "root cause", "analysis", "report", "summary", "result", "conclusion",
+        "based on", "after examining", "here is", "i have",
+    )
     for line in lines:
-        stripped = line.strip().strip("#").strip()
-        if stripped and not stripped.startswith("==") and len(stripped) < 200:
-            root_cause = stripped
+        stripped = line.strip()
+        if not stripped or len(stripped) < 10:
+            continue
+        lower_stripped = stripped.lower()
+        if any(lower_stripped.startswith(p) for p in skip_prefixes):
+            continue
+        if len(stripped) < 200:
+            root_cause = stripped[:200]
             break
 
     suspected_files = sorted(set(e.file_path for e in evidence_list))
@@ -129,7 +135,7 @@ def _parse_text_diagnosis(text: str, issue: str) -> DiagnosisResult:
         root_cause=root_cause,
         evidence=evidence_list,
         confidence=confidence,
-        missing_information=[],
+        missing_information=missing_info,
     )
 
 

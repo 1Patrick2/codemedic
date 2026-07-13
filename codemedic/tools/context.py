@@ -35,19 +35,20 @@ class RepositoryContext:
 
         Returns None if the path escapes the repository root.
         """
-        target = (self.root / relative).resolve()
-        try:
-            target.relative_to(self.root)
-        except ValueError:
-            return None
-
-        # Reject symlink escapes: the resolved path must still be inside root
-        if target.is_symlink():
-            real = target.resolve(strict=False)
+        target_raw = (self.root / relative)
+        # Check symlink escape BEFORE resolving
+        if target_raw.is_symlink():
+            real = target_raw.resolve(strict=False)
             try:
                 real.relative_to(self.root)
             except ValueError:
                 return None
+
+        target = target_raw.resolve()
+        try:
+            target.relative_to(self.root)
+        except ValueError:
+            return None
 
         return target
 

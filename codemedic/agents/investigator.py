@@ -105,7 +105,7 @@ def _parse_text_diagnosis(text: str, issue: str) -> DiagnosisResult:
                     )
 
     # Try to find confidence as a decimal number
-    confidence = 0.7
+    confidence = 0.0  # must be provided by model — no default high
     conf_match = re.search(r"(?:confidence|confident)[:\s]+(\d+\.?\d*)", text, re.IGNORECASE)
     if conf_match:
         try:

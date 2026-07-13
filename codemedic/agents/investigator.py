@@ -1,6 +1,7 @@
 """Investigator agent — reads repository code and logs to diagnose issues.
 
-Uses LangGraph create_react_agent with 4 read-only tools.
+Tools are bound to a validated RepositoryContext at construction time,
+so the model never controls the repository root path.
 Structured DiagnosisResult is extracted from the agent's final response.
 """
 
@@ -8,6 +9,7 @@ from __future__ import annotations
 
 import re
 import time
+from pathlib import Path
 from typing import Any
 
 from langchain.tools import tool
@@ -17,6 +19,7 @@ from pydantic import SecretStr
 
 from codemedic.config import settings
 from codemedic.schemas.diagnosis import DiagnosisResult, Evidence
+from codemedic.tools.context import RepositoryContext
 from codemedic.tools.repository import list_repo_tree as _list_repo_tree
 from codemedic.tools.repository import parse_log as _parse_log
 from codemedic.tools.repository import read_file as _read_file
@@ -63,10 +66,8 @@ def _parse_text_diagnosis(text: str, issue: str) -> DiagnosisResult:
 
     # Try to extract evidence: "File: xxx.py:40" or "`xxx.py` line 40"
     for fpath in file_paths:
-        # Find line numbers mentioned near this file
         for i, line in enumerate(lines):
             if fpath in line:
-                # Look for line numbers in this or nearby lines
                 nearby = " ".join(lines[max(0, i - 1):min(len(lines), i + 3)])
                 nums = re.findall(r'(?:line|L)\s*(\d+)', nearby, re.IGNORECASE)
                 start = int(nums[0]) if nums else None
@@ -132,32 +133,43 @@ def _parse_text_diagnosis(text: str, issue: str) -> DiagnosisResult:
     )
 
 
-def build_investigator() -> Any:
+def build_investigator(repository_root: str | Path) -> Any:
     """Build and return a compiled Investigator agent.
 
-    Uses create_react_agent with 4 read-only tools.
-    Structured output is handled by parsing the text response.
+    Tools are bound to the given repository root at construction time.
+    The model cannot change the repository path through tool arguments.
+
+    Args:
+        repository_root: Path to the repository root directory.
 
     Returns:
         A callable CompiledStateGraph agent.
     """
+    ctx = RepositoryContext(Path(repository_root))
 
     # ── Wrap tool functions with LangChain @tool decorator ──────────
+    # IMPORTANT: repository_path is NOT a parameter — it's captured
+    # from the RepositoryContext at build time.
 
     @tool
-    def list_repo_tree(repository_path: str) -> str:
-        """List the directory tree of a repository (max depth 4)."""
-        return _list_repo_tree(repository_path)
+    def list_repo_tree(max_depth: int = 4) -> str:
+        """List the directory tree of the repository (max depth 4)."""
+        return _list_repo_tree(str(ctx.root), max_depth)
 
     @tool
-    def search_code(repository_path: str, pattern: str) -> str:
+    def search_code(pattern: str, file_pattern: str = "*.py") -> str:
         """Search for a regex pattern in Python source files inside the repository."""
-        return _search_code(repository_path, pattern)
+        return _search_code(str(ctx.root), pattern, file_pattern)
 
     @tool
-    def read_file(repository_path: str, file_path: str) -> str:
-        """Read the content of a file from the repository (with line numbers)."""
-        return _read_file(repository_path, file_path)
+    def read_file(file_path: str) -> str:
+        """Read the content of a file from the repository (with line numbers).
+
+        Path traversal attempts are rejected.
+        """
+        if not ctx.resolve_path(file_path):
+            return f"ERROR: path traversal detected: {file_path}"
+        return _read_file(str(ctx.root), file_path)
 
     @tool
     def parse_log(log_content: str) -> str:
@@ -203,10 +215,9 @@ def run_investigator(
     Returns:
         A DiagnosisResult with root cause and evidence.
     """
-    agent = build_investigator()
+    agent = build_investigator(repository_path)
     tracer = trace or LocalTracer(task_id="investigate_cli")
 
-    # Build user message
     msg_parts = [f"Issue: {issue}", f"Repository path: {repository_path}"]
     if error_log:
         msg_parts.append(f"\nError log:\n{error_log}")
@@ -246,7 +257,6 @@ def run_investigator(
             diagnosis = _parse_text_diagnosis(final_text, issue)
             return diagnosis
 
-        # Fallback: construct from raw result
         return _fallback_diagnosis(issue, str(result))
 
     except Exception as exc:

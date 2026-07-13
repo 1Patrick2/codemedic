@@ -291,7 +291,7 @@ def patch_review_node(state: RepairState) -> dict[str, Any]:
     # Check retry limit — skip interrupt if exceeded
     retry_count = state.get("retry_count", 0)
     max_retries = settings.max_fixer_retries
-    if retry_count > max_retries:
+    if retry_count >= max_retries:
         return {
             "human_decision": "rejected",
             "review_reason": f"Retry limit ({max_retries}) exceeded",

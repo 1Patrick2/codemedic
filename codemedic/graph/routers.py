@@ -132,7 +132,7 @@ def patch_validation_router(state: RepairState) -> PatchValidationRoute:
       - No diff_validation → invalid_final (fail closed)
       - Diff valid → patch_review
       - Invalid with retry left → fixer_agent
-      - Invalid no retry → diagnosis_review
+      - Invalid no retry → final_report (fail closed)
 
     All values from state — no LLM calls.
     """
@@ -150,9 +150,6 @@ def patch_validation_router(state: RepairState) -> PatchValidationRoute:
         return "invalid_retry"
 
     return "invalid_final"
-
-    retry_count = state.get("retry_count", 0)
-    return "invalid_retry" if retry_count < 2 else "invalid_final"
 
 
 def verify_router(state: RepairState) -> RouteLabel:

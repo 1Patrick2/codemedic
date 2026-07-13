@@ -102,7 +102,7 @@ def build_workflow() -> StateGraph:
         {
             "valid": "patch_review",
             "invalid_retry": "prepare_fix_retry",
-            "invalid_final": "diagnosis_review",
+            "invalid_final": "final_report",
         },
     )
 

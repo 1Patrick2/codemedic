@@ -34,12 +34,24 @@ def intake(state: RepairState) -> dict[str, Any]:
 
     return {
         "task_id": state.get("task_id") or f"task_{uuid.uuid4().hex[:12]}",
+        "thread_id": state.get("thread_id", ""),
+        "workflow_status": "running",
         "investigation_steps": 0,
         "retrieval_round": 0,
         "retry_count": 0,
         "allowed_files": [],
         "errors": errors,
     }
+
+
+def mark_diagnosis_review_waiting(state: RepairState) -> dict[str, Any]:
+    """Persist the diagnosis-review status before interrupting."""
+    return {"workflow_status": "waiting_diagnosis_review"}
+
+
+def mark_patch_review_waiting(state: RepairState) -> dict[str, Any]:
+    """Persist the patch-review status before interrupting."""
+    return {"workflow_status": "waiting_patch_review"}
 
 
 def hybrid_retrieve(state: RepairState) -> dict[str, Any]:
@@ -115,23 +127,26 @@ def investigator_node(state: RepairState) -> dict[str, Any]:
     )
 
     # Validate evidence against the actual filesystem
+    from codemedic.schemas.results import EvidenceValidationResult
+
     try:
         ctx = RepositoryContext(Path(state["repository_path"]))
-        validation = validate_evidence(diagnosis, ctx)
+        validation_result = EvidenceValidationResult.model_validate(
+            validate_evidence(diagnosis, ctx)
+        )
     except Exception as exc:
-        validation = {
-            "valid": False,
-            "errors": [f"Validation error: {exc}"],
-            "validated_evidence": [],
-        }
+        validation_result = EvidenceValidationResult(
+            valid=False,
+            errors=[f"Validation error: {exc}"],
+            validated_evidence=[],
+        )
 
     # Populate allowed_files from validated evidence
-    validated_evidence = validation.get("validated_evidence", [])
-    allowed_files = sorted({ev.file_path for ev in validated_evidence})
+    allowed_files = sorted({ev.file_path for ev in validation_result.validated_evidence})
 
     return {
         "diagnosis": diagnosis,
-        "evidence_validation": validation,
+        "evidence_validation": validation_result.model_dump(),
         "allowed_files": allowed_files,
         "investigation_steps": state.get("investigation_steps", 0) + 1,
     }
@@ -151,10 +166,13 @@ def fixer_node(state: RepairState) -> dict[str, Any]:
     """
     from codemedic.agents.fixer import run_fixer
 
+    fix_attempt_count = state.get("fix_attempt_count", 0) + 1
     diagnosis = state.get("diagnosis")
     if diagnosis is None:
         return {
             "patch": None,
+            "fix_attempt_count": fix_attempt_count,
+            "workflow_status": "running",
             "errors": state.get("errors", []) + ["No diagnosis available for Fixer"],
         }
 
@@ -200,16 +218,21 @@ def fixer_node(state: RepairState) -> dict[str, Any]:
         if errors:
             return {
                 "patch": patch_dict,
+                "fix_attempt_count": fix_attempt_count,
+                "workflow_status": "running",
                 "errors": state.get("errors", []) + errors,
             }
 
         return {
             "patch": patch_dict,
-            "fix_attempt_count": state.get("fix_attempt_count", 0) + 1,
+            "fix_attempt_count": fix_attempt_count,
+            "workflow_status": "running",
         }
     except Exception as exc:
         return {
             "patch": None,
+            "fix_attempt_count": fix_attempt_count,
+            "workflow_status": "running",
             "errors": state.get("errors", []) + [f"Fixer agent error: {exc}"],
         }
 
@@ -225,6 +248,7 @@ def prepare_fix_retry(state: RepairState) -> dict[str, Any]:
         "retry_count": state.get("retry_count", 0) + 1,
         "patch": None,
         "diff_validation": None,
+        "workflow_status": "running",
     }
 
 
@@ -336,8 +360,9 @@ def patch_validation_node(state: RepairState) -> dict[str, Any]:
         diff_validation result.
     """
     patch = state.get("patch")
+    from codemedic.schemas.results import DiffValidationResult
+
     if patch is None:
-        from codemedic.schemas.results import DiffValidationResult
         return {
             "diff_validation": DiffValidationResult(
                 valid=False,
@@ -350,9 +375,11 @@ def patch_validation_node(state: RepairState) -> dict[str, Any]:
     unified_diff = patch.get("unified_diff", "") if isinstance(patch, dict) else ""
 
     allowed = state.get("allowed_files")
-    result = validate_diff(unified_diff, allowed_files=allowed)
+    result = DiffValidationResult.model_validate(
+        validate_diff(unified_diff, allowed_files=allowed)
+    )
 
-    return {"diff_validation": result}
+    return {"diff_validation": result.model_dump()}
 
 
 def final_report_node(state: RepairState) -> dict[str, Any]:
@@ -368,7 +395,9 @@ def final_report_node(state: RepairState) -> dict[str, Any]:
     from codemedic.schemas.adapters import get_patch_apply_result
 
     diag = state.get("diagnosis")
-    test_results = state.get("test_results", [])
+    from codemedic.schemas.adapters import get_test_results
+
+    test_results = get_test_results(state)
 
     apply_result = get_patch_apply_result(state)
     patch_applied = apply_result is not None and apply_result.success
@@ -391,6 +420,7 @@ def final_report_node(state: RepairState) -> dict[str, Any]:
     return {
         "final_report": report,
         "final_status": final_status,
+        "workflow_status": "completed",
         "verifier_summary": state.get("verifier_summary"),
         "sandbox_path": state.get("sandbox_path"),
     }
@@ -502,7 +532,9 @@ def verifier_node(state: RepairState) -> dict[str, Any]:
 
     issue = state["issue"]
     patch = state.get("patch")
-    test_results = state.get("test_results", [])
+    from codemedic.schemas.adapters import get_test_results
+
+    test_results = [result.model_dump() for result in get_test_results(state)]
 
     patch_summary = ""
     if patch:

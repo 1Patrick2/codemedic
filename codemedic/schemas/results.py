@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from codemedic.schemas.diagnosis import Evidence
 
@@ -53,6 +53,15 @@ class PatchApplyResult(BaseModel):
         default=None,
         description="Path to the sandbox directory",
     )
+
+    @model_validator(mode="after")
+    def validate_success_state(self) -> "PatchApplyResult":
+        """Reject contradictory success results."""
+        if self.success and self.returncode != 0:
+            raise ValueError("Successful patch application must have returncode 0")
+        if self.success and self.sandbox_path is None:
+            raise ValueError("Successful patch application requires sandbox_path")
+        return self
 
 
 class TestResult(BaseModel):

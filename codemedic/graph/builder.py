@@ -20,6 +20,8 @@ from codemedic.graph.nodes import (
     hybrid_retrieve,
     intake,
     investigator_node,
+    mark_diagnosis_review_waiting,
+    mark_patch_review_waiting,
     patch_review_node,
     patch_validation_node,
     prepare_fix_retry,
@@ -53,6 +55,8 @@ def build_workflow() -> StateGraph:
 
     # ── Register nodes ──────────────────────────────────────────────
     graph.add_node("intake", intake)
+    graph.add_node("mark_diagnosis_review_waiting", mark_diagnosis_review_waiting)
+    graph.add_node("mark_patch_review_waiting", mark_patch_review_waiting)
     graph.add_node("hybrid_retrieve", hybrid_retrieve)
     graph.add_node("investigator_agent", investigator_node)
     graph.add_node("evidence_gate", lambda s: {})  # router-only node
@@ -79,9 +83,11 @@ def build_workflow() -> StateGraph:
         {
             "sufficient": "fixer_agent",
             "insufficient": "hybrid_retrieve",
-            "uncertain": "diagnosis_review",
+            "uncertain": "mark_diagnosis_review_waiting",
         },
     )
+
+    graph.add_edge("mark_diagnosis_review_waiting", "diagnosis_review")
 
     # Diagnosis review → accept (fixer) or reject (end)
     graph.add_conditional_edges(
@@ -100,11 +106,13 @@ def build_workflow() -> StateGraph:
         "patch_validation",
         patch_validation_router,
         {
-            "valid": "patch_review",
+            "valid": "mark_patch_review_waiting",
             "invalid_retry": "prepare_fix_retry",
             "invalid_final": "final_report",
         },
     )
+
+    graph.add_edge("mark_patch_review_waiting", "patch_review")
 
     # Prepare fix retry → fixer
     graph.add_edge("prepare_fix_retry", "fixer_agent")
@@ -246,10 +254,14 @@ def _make_workflow_result(state: dict, tid: str) -> "WorkflowRunResult":
         else:
             workflow_status = "failed"
 
+    snapshot = dict(state)
+    snapshot["thread_id"] = tid
+    snapshot["workflow_status"] = workflow_status
+
     return WorkflowRunResult(
         task_id=state.get("task_id", "unknown"),
         thread_id=tid,
         workflow_status=workflow_status,  # type: ignore[arg-type]
         interrupted=interrupted,
-        state=dict(state),
+        state=snapshot,
     )

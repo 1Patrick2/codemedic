@@ -10,6 +10,12 @@ from typing import Literal
 
 from codemedic.config import settings
 from codemedic.graph.state import RepairState
+from codemedic.schemas.adapters import (
+    get_diff_validation,
+    get_evidence_validation,
+    get_patch_apply_result,
+    get_test_results,
+)
 
 # Route labels — typed as Literal so mypy can verify return types
 SUFFICIENT: Literal["sufficient"] = "sufficient"
@@ -39,8 +45,8 @@ def evidence_gate_router(state: RepairState) -> RouteLabel:
         return INSUFFICIENT
 
     # Evidence validation failed → route to manual review
-    validation = state.get("evidence_validation")
-    if validation and not validation.get("valid", True):
+    validation = get_evidence_validation(state)
+    if validation is not None and not validation.valid:
         return UNCERTAIN
 
     # Very low confidence — insufficient evidence
@@ -88,8 +94,8 @@ def patch_apply_router(state: RepairState) -> PatchApplyRoute:
       - PatchApplyResult exists and success → run tests
       - Otherwise → final report
     """
-    apply_result = state.get("patch_apply_result")
-    if apply_result and apply_result.get("success"):
+    apply_result = get_patch_apply_result(state)
+    if apply_result is not None and apply_result.success:
         return "success"
     return "failed"
 
@@ -136,13 +142,13 @@ def patch_validation_router(state: RepairState) -> PatchValidationRoute:
 
     All values from state — no LLM calls.
     """
-    diff_val = state.get("diff_validation")
+    diff_val = get_diff_validation(state)
 
     # No validation result must fail closed
-    if not diff_val:
+    if diff_val is None:
         return "invalid_final"
 
-    if diff_val.get("valid") is True:
+    if diff_val.valid:
         return "valid"
 
     retry_count = state.get("retry_count", 0)
@@ -165,21 +171,20 @@ def verify_router(state: RepairState) -> RouteLabel:
 
     All values are taken directly from state — no LLM calls.
     """
-    # Check if patch apply failed (errors from sandbox)
-    errors = state.get("errors", [])
-    if any("Patch apply failed" in e for e in errors):
+    apply_result = get_patch_apply_result(state)
+    if apply_result is None or not apply_result.success:
         return UNCERTAIN
 
-    test_results = state.get("test_results", [])
+    test_results = get_test_results(state)
     if not test_results:
         return UNCERTAIN
 
     # Check for timeouts
-    if any(r.get("timed_out", False) for r in test_results):
+    if any(result.timed_out for result in test_results):
         return UNCERTAIN
 
     # All passed
-    if all(r.get("returncode", 1) == 0 for r in test_results):
+    if all(result.returncode == 0 for result in test_results):
         return SUFFICIENT
 
     # Some failed — check retry

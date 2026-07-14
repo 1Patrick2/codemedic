@@ -91,7 +91,7 @@ def create_initial_state(
     return RepairState(
         task_id=task_id or f"task_{uuid.uuid4().hex[:12]}",
         thread_id=thread_id or "",
-        workflow_status=None,
+        workflow_status="running",
         issue=issue,
         error_log=error_log,
         repository_path=repository_path,

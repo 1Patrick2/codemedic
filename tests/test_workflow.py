@@ -295,6 +295,7 @@ class TestWorkflowGraph:
 
         from codemedic.graph.builder import compile_workflow
 
+        initial_state["thread_id"] = "test_e2e"
         agent = compile_workflow(checkpointer=MemorySaver())
         config = {"configurable": {"thread_id": "test_e2e"}}
 
@@ -304,6 +305,7 @@ class TestWorkflowGraph:
         # Check review type
         interrupt_payload = result["__interrupt__"][0].value
         assert interrupt_payload["review_type"] == "patch"  # must be patch review
+        assert result["workflow_status"] == "waiting_patch_review"
 
         # Resume with 'approved' decision
         result = agent.invoke(Command(resume={"decision": "approved"}), config)
@@ -312,10 +314,15 @@ class TestWorkflowGraph:
         assert result["final_report"] is not None
         assert result["diagnosis"] is not None
         assert result["diagnosis"].confidence == 0.85
+        assert result["thread_id"] == "test_e2e"
+        assert result["patch_apply_result"]["success"] is True
+        assert result["test_results"]
+        assert all(item["returncode"] == 0 for item in result["test_results"])
 
     @patch("codemedic.graph.nodes.run_investigator")
+    @patch("codemedic.agents.fixer.run_fixer")
     def test_workflow_does_retrieval_loop(
-        self, mock_investigator, initial_state: RepairState
+        self, mock_fixer, mock_investigator, initial_state: RepairState
     ) -> None:
         """Low-confidence diagnosis triggers re-retrieval."""
         mock_investigator.return_value = DiagnosisResult(
@@ -324,6 +331,15 @@ class TestWorkflowGraph:
             evidence=[],
             confidence=0.3,
             missing_information=["Need more context"],
+        )
+        from codemedic.schemas.patch import PatchProposal
+
+        mock_fixer.return_value = PatchProposal(
+            modified_files=[],
+            unified_diff="",
+            rationale="No patch needed for this routing test",
+            risks=[],
+            test_suggestions=[],
         )
 
         from langgraph.checkpoint.memory import MemorySaver
@@ -334,11 +350,18 @@ class TestWorkflowGraph:
         agent = compile_workflow(checkpointer=MemorySaver())
         config = {"configurable": {"thread_id": "test_loop"}}
 
-        # First invoke pauses at human_review
+        # First invoke pauses at diagnosis review
         result = agent.invoke(initial_state, config)
 
-        # Resume with 'approved' to complete
-        result = agent.invoke(Command(resume={"decision": "approved"}), config)
+        interrupt_payload = result["__interrupt__"][0].value
+        assert interrupt_payload["review_type"] == "diagnosis"
+        assert result["workflow_status"] == "waiting_diagnosis_review"
+
+        # Accept the diagnosis with the diagnosis-specific decision.
+        result = agent.invoke(
+            Command(resume={"decision": "accept_diagnosis"}),
+            config,
+        )
 
         # Should have completed at least 1 retrieval round
 

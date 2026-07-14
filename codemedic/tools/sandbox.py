@@ -6,6 +6,7 @@ import hashlib
 import shutil
 import subprocess
 import tempfile
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -31,12 +32,10 @@ def create_temp_copy(repo_path: str) -> str:
 
     # Keep the copy outside the target repository so git apply does not
     # discover and use the target repository's parent .git directory.
-    sandbox_root = Path.cwd().parent / ".codemedic_sandboxes"
+    sandbox_root = Path(tempfile.gettempdir()) / "codemedic_sandboxes"
     sandbox_root.mkdir(parents=True, exist_ok=True)
-    sandbox_dir = Path(tempfile.mkdtemp(
-        prefix="codemedic_sandbox_",
-        dir=sandbox_root,
-    ))
+    sandbox_dir = sandbox_root / f"codemedic_sandbox_{uuid.uuid4().hex}"
+    sandbox_dir.mkdir()
     try:
         shutil.copytree(
             source,
@@ -95,7 +94,7 @@ def apply_patch(repo_path: str, unified_diff: str) -> dict[str, Any]:
     try:
         check_result = subprocess.run(
             [
-                "git", "apply", "--check", "--unidiff-zero",
+                "git", "apply", "--check",
                 "--ignore-whitespace",
             ],
             input=unified_diff,
@@ -134,7 +133,7 @@ def apply_patch(repo_path: str, unified_diff: str) -> dict[str, Any]:
     try:
         apply_result = subprocess.run(
             [
-                "git", "apply", "--unidiff-zero",
+                "git", "apply",
                 "--ignore-whitespace",
             ],
             input=unified_diff,

@@ -24,7 +24,7 @@ def _build_patch(
     relative_path: str,
     replacements: dict[str, str],
     *,
-    context_lines: int = 0,
+    context_lines: int = 3,
 ) -> str:
     """Build a real unified diff from the checked-in Demo source."""
     source = (DEMO_REPO / relative_path).read_bytes().decode("utf-8")
@@ -90,6 +90,7 @@ def test_real_patch_apply_and_sandbox_tests() -> None:
 
     sandbox = create_temp_copy(str(DEMO_REPO))
     try:
+        assert any(line.startswith(" ") for line in FIX_PATCH.splitlines())
         applied = apply_patch(sandbox, FIX_PATCH)
         assert applied["success"] is True, applied
         assert applied["returncode"] == 0

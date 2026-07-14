@@ -137,7 +137,7 @@ def patch_review_router(state: RepairState) -> HumanReviewRoute:
     decision = state.get("human_decision")
     if decision == "approved":
         return "approved"
-    if decision == "retry":
+    if decision == "retry" and state.get("retry_count", 0) < settings.max_fixer_retries:
         return "retry"
     return "rejected"
 

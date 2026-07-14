@@ -53,6 +53,22 @@ TEST_SUGGESTIONS: test1 | test2
 """
 
 
+_SUMMARY_LABELS = (
+    "MODIFIED_FILES",
+    "RATIONALE",
+    "RISKS",
+    "TEST_SUGGESTIONS",
+)
+
+
+def _extract_summary_section(text: str, label: str) -> str:
+    """Extract one summary field without consuming later labeled fields."""
+    labels = "|".join(re.escape(item) for item in _SUMMARY_LABELS)
+    pattern = rf"(?ms)^{re.escape(label)}:\s*(.*?)(?=^(?:{labels}):|\Z)"
+    match = re.search(pattern, text)
+    return match.group(1).strip() if match else ""
+
+
 def _parse_fixer_response(text: str) -> PatchProposal:
     """Parse the model's text response into a PatchProposal."""
     diff_parts = []
@@ -66,18 +82,14 @@ def _parse_fixer_response(text: str) -> PatchProposal:
             diff_parts.append(line)
     unified_diff = "\n".join(diff_parts)
 
-    files_match = re.search(r"MODIFIED_FILES:\s*(.+)", text)
-    rationale_match = re.search(r"RATIONALE:\s*(.+)", text, re.DOTALL)
-    risks_match = re.search(r"RISKS:\s*(.+)", text, re.DOTALL)
-    tests_match = re.search(r"TEST_SUGGESTIONS:\s*(.+)", text, re.DOTALL)
-
     modified_files = [
-        f.strip() for f in (files_match.group(1).split(",") if files_match else [])
+        f.strip() for f in _extract_summary_section(text, "MODIFIED_FILES").split(",")
+        if f.strip()
     ]
-    rationale = rationale_match.group(1).strip() if rationale_match else ""
-    risks_str = risks_match.group(1) if risks_match else ""
+    rationale = _extract_summary_section(text, "RATIONALE")
+    risks_str = _extract_summary_section(text, "RISKS")
     risks = [r.strip() for r in risks_str.split("|") if r.strip()]
-    tests_str = tests_match.group(1) if tests_match else ""
+    tests_str = _extract_summary_section(text, "TEST_SUGGESTIONS")
     test_suggestions = [t.strip() for t in tests_str.split("|") if t.strip()]
 
     return PatchProposal(

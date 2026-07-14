@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import tempfile
+import uuid
 from pathlib import Path
 from unittest.mock import patch
 
@@ -20,12 +22,14 @@ from codemedic.graph.nodes import (
     patch_review_node,
     patch_validation_node,
     prepare_fix_retry,
+    run_tests_node,
 )
 from codemedic.graph.routers import (
     INSUFFICIENT,
     UNCERTAIN,
     intake_router,
     patch_apply_router,
+    patch_review_router,
     patch_validation_router,
     verify_router,
 )
@@ -181,6 +185,35 @@ def test_patch_review_allows_approval_at_retry_limit() -> None:
     options = mock_interrupt.call_args.args[0]["options"]
     assert options == ["approved", "rejected"]
     assert result["human_decision"] == "approved"
+
+
+def test_patch_review_rejects_direct_retry_at_retry_limit() -> None:
+    state = create_initial_state("issue", DEMO_REPO)
+    state["retry_count"] = 1
+    state["human_decision"] = "retry"
+
+    assert patch_review_router(state) == "rejected"
+
+
+def test_run_tests_clears_sandbox_path_after_cleanup() -> None:
+    sandbox = Path(tempfile.gettempdir()) / f"codemedic_sandbox_{uuid.uuid4().hex}"
+    sandbox.mkdir()
+    state = create_initial_state("issue", DEMO_REPO)
+    state["sandbox_path"] = str(sandbox)
+
+    with patch(
+        "codemedic.tools.test_runner.run_tests",
+        return_value=[TestResult(
+            command_id="cmd_0",
+            argv=["python", "-m", "pytest"],
+            returncode=0,
+        )],
+    ):
+        result = run_tests_node(state)
+
+    assert result["sandbox_path"] is None
+    assert result["sandbox_cleaned"] is True
+    assert not sandbox.exists()
 
 
 def test_patch_validation_checks_declared_files_once() -> None:

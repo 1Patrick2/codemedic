@@ -37,7 +37,11 @@ class RepositoryContext:
         """
         target_raw = (self.root / relative)
         # Check symlink escape BEFORE resolving
-        if target_raw.is_symlink():
+        try:
+            is_symlink = target_raw.is_symlink()
+        except OSError:
+            return None
+        if is_symlink:
             real = target_raw.resolve(strict=False)
             try:
                 real.relative_to(self.root)

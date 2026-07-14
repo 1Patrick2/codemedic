@@ -10,6 +10,11 @@ build/
 main_project.md
 stage_prompt.md
 
+# Local agent planning notes
+findings.md
+progress.md
+task_plan.md
+
 # Environment
 .env
 !.env.example

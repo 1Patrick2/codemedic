@@ -43,6 +43,8 @@ class RepairState(TypedDict):
     # ── Sandbox ──────────────────────────────────────────────────────
     sandbox_path: str | None
     """Path to the sandbox temp copy."""
+    sandbox_cleaned: bool
+    """Whether no temporary sandbox remains after the last sandbox stage."""
     patch_apply_result: dict[str, Any] | None
     """Result from apply_patch_node (dict for backward compat)."""
     test_results: list[dict[str, Any]]
@@ -104,6 +106,7 @@ def create_initial_state(
         failure_feedback=None,
         human_feedback=None,
         sandbox_path=None,
+        sandbox_cleaned=False,
         patch_apply_result=None,
         test_results=[],
         verifier_summary=None,

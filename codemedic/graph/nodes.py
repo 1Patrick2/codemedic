@@ -444,7 +444,12 @@ def final_report_node(state: RepairState) -> dict[str, Any]:
         "final_status": final_status,
         "workflow_status": workflow_status,
         "verifier_summary": state.get("verifier_summary"),
-        "sandbox_path": state.get("sandbox_path"),
+        "sandbox_path": (
+            state.get("sandbox_path")
+            if not state.get("sandbox_cleaned", False)
+            else None
+        ),
+        "sandbox_cleaned": state.get("sandbox_cleaned", False),
     }
 
 
@@ -472,7 +477,11 @@ def apply_patch_node(state: RepairState) -> dict[str, Any]:
             stderr="No patch to apply",
             modified_files=[], sandbox_path=None,
         )
-        return {"patch_apply_result": result.model_dump()}
+        return {
+            "patch_apply_result": result.model_dump(),
+            "sandbox_path": None,
+            "sandbox_cleaned": True,
+        }
 
     unified_diff = patch.get("unified_diff", "") if isinstance(patch, dict) else ""
     if not unified_diff:
@@ -481,7 +490,11 @@ def apply_patch_node(state: RepairState) -> dict[str, Any]:
             stderr="Patch has no diff content",
             modified_files=[], sandbox_path=None,
         )
-        return {"patch_apply_result": result.model_dump()}
+        return {
+            "patch_apply_result": result.model_dump(),
+            "sandbox_path": None,
+            "sandbox_cleaned": True,
+        }
 
     # Verify patch boundaries
     allowed = state.get("allowed_files")
@@ -492,7 +505,11 @@ def apply_patch_node(state: RepairState) -> dict[str, Any]:
             stderr=f"Patch violates boundaries: {boundary_check['violations']}",
             modified_files=[], sandbox_path=None,
         )
-        return {"patch_apply_result": result.model_dump()}
+        return {
+            "patch_apply_result": result.model_dump(),
+            "sandbox_path": None,
+            "sandbox_cleaned": True,
+        }
 
     try:
         sandbox_path = create_temp_copy(state["repository_path"])
@@ -508,7 +525,11 @@ def apply_patch_node(state: RepairState) -> dict[str, Any]:
                 modified_files=raw.get("modified_files", []),
                 sandbox_path=None,
             )
-            return {"patch_apply_result": result.model_dump(), "sandbox_path": None}
+            return {
+                "patch_apply_result": result.model_dump(),
+                "sandbox_path": None,
+                "sandbox_cleaned": True,
+            }
 
         result = PatchApplyResult(
             success=True,
@@ -522,6 +543,7 @@ def apply_patch_node(state: RepairState) -> dict[str, Any]:
         return {
             "patch_apply_result": result.model_dump(),
             "sandbox_path": result.sandbox_path,
+            "sandbox_cleaned": False,
         }
     except Exception as exc:
         if "sandbox_path" in locals():
@@ -531,7 +553,11 @@ def apply_patch_node(state: RepairState) -> dict[str, Any]:
             stderr=str(exc),
             modified_files=[], sandbox_path=None,
         )
-        return {"patch_apply_result": result.model_dump()}
+        return {
+            "patch_apply_result": result.model_dump(),
+            "sandbox_path": None,
+            "sandbox_cleaned": True,
+        }
 
 
 def run_tests_node(state: RepairState) -> dict[str, Any]:
@@ -549,18 +575,30 @@ def run_tests_node(state: RepairState) -> dict[str, Any]:
             command_id="init", argv=["error"],
             returncode=-1, stderr="No sandbox path for tests",
         )
-        return {"test_results": [err_result.model_dump()]}
+        return {
+            "test_results": [err_result.model_dump()],
+            "sandbox_path": None,
+            "sandbox_cleaned": True,
+        }
 
     try:
         results = run_tests(str(sandbox_path))
-        return {"test_results": [r.model_dump() for r in results]}
+        return {
+            "test_results": [r.model_dump() for r in results],
+            "sandbox_path": None,
+            "sandbox_cleaned": True,
+        }
     except Exception as exc:
         from codemedic.schemas.results import TestResult
         err_result = TestResult(
             command_id="error", argv=["error"],
             returncode=-1, stderr=f"Test execution error: {exc}",
         )
-        return {"test_results": [err_result.model_dump()]}
+        return {
+            "test_results": [err_result.model_dump()],
+            "sandbox_path": None,
+            "sandbox_cleaned": True,
+        }
     finally:
         from codemedic.tools.sandbox import cleanup_sandbox
 

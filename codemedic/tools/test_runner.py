@@ -17,6 +17,7 @@ _ALLOWED_COMMANDS: list[list[str]] = [
     [PY, "-m", "pytest"],
     [PY, "-m", "pytest", "-v"],
     [PY, "-m", "pytest", "-q"],
+    [PY, "-m", "pytest", "-q", "-p", "no:cacheprovider"],
     [PY, "-m", "ruff", "check"],
     [PY, "-m", "mypy"],
     [PY, "-m", "pip", "check"],
@@ -59,7 +60,7 @@ def run_tests(
     max_output = settings.max_output_length
     results: list[TestResult] = []
 
-    cmd_list = commands or [[PY, "-m", "pytest", "-q"]]
+    cmd_list = commands or [[PY, "-m", "pytest", "-q", "-p", "no:cacheprovider"]]
 
     for cmd_id, cmd in enumerate(cmd_list):
         if not is_command_allowed(cmd):

@@ -42,3 +42,10 @@
 - `conda run -n codemedic python -m mypy codemedic`: passed for 29 source files.
 - `conda run -n codemedic python -m pip check`: no broken requirements.
 - Remaining warning is the pre-existing deprecated `langgraph.prebuilt.create_react_agent` import; explicitly out of scope.
+
+## Latest expert review and proof round
+
+- The local Demo contains three actual failing behaviors: two in `src/services/data_service.py` and one in `src/utils/math_helpers.py`; therefore the real full-test proof modifies two files, not only the file named in the expert example.
+- Retry now preserves the previous patch and propagates validation/test/human/verifier feedback to Fixer; the final retry review still permits approval or rejection.
+- Real Sandbox proof applies a generated Diff, reports actual changed files by before/after hash, runs the Demo Test Runner to return code 0, verifies the source hash is unchanged, and cleans the Sandbox.
+- `findings.md`, `progress.md`, and `task_plan.md` remain temporary review artifacts and must be removed before any merge because they contain local environment information.

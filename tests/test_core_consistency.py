@@ -14,10 +14,17 @@ from codemedic.graph.builder import (
     resume_workflow,
     run_workflow,
 )
-from codemedic.graph.nodes import fixer_node, prepare_fix_retry
+from codemedic.graph.nodes import (
+    fixer_node,
+    intake,
+    patch_review_node,
+    patch_validation_node,
+    prepare_fix_retry,
+)
 from codemedic.graph.routers import (
     INSUFFICIENT,
     UNCERTAIN,
+    intake_router,
     patch_apply_router,
     patch_validation_router,
     verify_router,
@@ -37,7 +44,9 @@ def test_patch_apply_result_rejects_inconsistent_success() -> None:
 
 def test_patch_apply_result_requires_sandbox_on_success() -> None:
     with pytest.raises(ValidationError):
-        PatchApplyResult(success=True, returncode=0)
+        PatchApplyResult(
+            success=True, returncode=0, sandbox_path="sandbox",
+        )
 
 
 def test_patch_apply_router_validates_state_result() -> None:
@@ -52,6 +61,13 @@ def test_patch_validation_missing_result_fails_closed() -> None:
     state = create_initial_state("issue", DEMO_REPO)
 
     assert patch_validation_router(state) == "invalid_final"
+
+
+def test_intake_router_fails_closed_for_missing_repository() -> None:
+    state = create_initial_state("issue", "/nonexistent/path")
+    state.update(intake(state))
+
+    assert intake_router(state) == "invalid"
 
 
 def test_patch_validation_invalid_result_retries_only_with_budget() -> None:
@@ -69,6 +85,7 @@ def test_verify_router_validates_test_result_schema() -> None:
     state["patch_apply_result"] = {
         "success": True,
         "returncode": 0,
+        "modified_files": ["src/utils/math_helpers.py"],
         "sandbox_path": "sandbox",
     }
     state["test_results"] = [{"returncode": 0}]
@@ -82,6 +99,7 @@ def test_verify_router_stops_after_retry_budget() -> None:
     state["patch_apply_result"] = {
         "success": True,
         "returncode": 0,
+        "modified_files": ["src/utils/math_helpers.py"],
         "sandbox_path": "sandbox",
     }
     state["test_results"] = [
@@ -115,6 +133,74 @@ def test_fixer_failure_still_counts_as_an_attempt() -> None:
         result = fixer_node(state)
 
     assert result["fix_attempt_count"] == 1
+
+
+def test_fixer_receives_retry_feedback() -> None:
+    state = create_initial_state("issue", DEMO_REPO)
+    state["diagnosis"] = DiagnosisResult(
+        suspected_files=["src/utils/math_helpers.py"],
+        root_cause="known test cause",
+        evidence=[],
+        confidence=0.8,
+        missing_information=[],
+    )
+    state["previous_patch"] = {"unified_diff": "old patch"}
+    state["failure_feedback"] = "test_factorial failed"
+    state["human_feedback"] = "Please fix the loop update."
+    state["verifier_summary"] = "The factorial test still fails."
+
+    from codemedic.schemas.patch import PatchProposal
+
+    with patch(
+        "codemedic.agents.fixer.run_fixer",
+        return_value=PatchProposal(
+            modified_files=[], unified_diff="", rationale="", risks=[],
+            test_suggestions=[],
+        ),
+    ) as mock_fixer:
+        fixer_node(state)
+
+    call = mock_fixer.call_args.kwargs
+    assert call["previous_patch"] == {"unified_diff": "old patch"}
+    assert call["failure_feedback"] == "test_factorial failed"
+    assert call["human_feedback"] == "Please fix the loop update."
+    assert call["verifier_summary"] == "The factorial test still fails."
+
+
+def test_patch_review_allows_approval_at_retry_limit() -> None:
+    state = create_initial_state("issue", DEMO_REPO)
+    state["retry_count"] = 1
+    state["patch"] = {"unified_diff": "valid"}
+
+    with patch(
+        "langgraph.types.interrupt",
+        return_value={"decision": "approved", "reason": "looks good"},
+    ) as mock_interrupt:
+        result = patch_review_node(state)
+
+    options = mock_interrupt.call_args.args[0]["options"]
+    assert options == ["approved", "rejected"]
+    assert result["human_decision"] == "approved"
+
+
+def test_patch_validation_checks_declared_files_once() -> None:
+    state = create_initial_state("issue", DEMO_REPO)
+    state["allowed_files"] = ["src/utils/math_helpers.py"]
+    state["patch"] = {
+        "modified_files": ["src/other.py"],
+        "unified_diff": "\n".join([
+            "--- a/src/utils/math_helpers.py",
+            "+++ b/src/utils/math_helpers.py",
+            "@@ -1 +1 @@",
+            "-old",
+            "+new",
+        ]),
+    }
+
+    result = patch_validation_node(state)
+
+    assert result["diff_validation"]["valid"] is False
+    assert any("Declared but not in diff" in e for e in result["diff_validation"]["errors"])
 
 
 def test_prepare_fix_retry_is_the_only_retry_counter_transition() -> None:
@@ -185,10 +271,14 @@ def test_verifier_formats_serialized_test_result_fields() -> None:
 
 def test_final_status_requires_all_success_conditions() -> None:
     state = create_initial_state("issue", DEMO_REPO)
-    state["diff_validation"] = {"valid": True}
+    state["diff_validation"] = {
+        "valid": True,
+        "modified_files": ["src/utils/math_helpers.py"],
+    }
     state["patch_apply_result"] = {
         "success": True,
         "returncode": 0,
+        "modified_files": ["src/utils/math_helpers.py"],
         "sandbox_path": "sandbox",
     }
     state["test_results"] = [

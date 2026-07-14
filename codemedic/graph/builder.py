@@ -31,6 +31,7 @@ from codemedic.graph.nodes import (
 from codemedic.graph.routers import (
     diagnosis_review_router,
     evidence_gate_router,
+    intake_router,
     patch_apply_router,
     patch_review_router,
     patch_validation_router,
@@ -73,7 +74,11 @@ def build_workflow() -> StateGraph:
     # ── Edges ───────────────────────────────────────────────────────
     graph.set_entry_point("intake")
 
-    graph.add_edge("intake", "hybrid_retrieve")
+    graph.add_conditional_edges(
+        "intake",
+        intake_router,
+        {"valid": "hybrid_retrieve", "invalid": "final_report"},
+    )
     graph.add_edge("hybrid_retrieve", "investigator_agent")
 
     # Evidence gate → diagnosis_review or fixer or retry
@@ -249,7 +254,9 @@ def _make_workflow_result(state: dict, tid: str) -> "WorkflowRunResult":
     else:
         # Check if there was a fatal error
         final_status = state.get("final_status")
-        if final_status is not None:
+        if state.get("workflow_status") == "failed":
+            workflow_status = "failed"
+        elif final_status is not None:
             workflow_status = "completed"
         else:
             workflow_status = "failed"

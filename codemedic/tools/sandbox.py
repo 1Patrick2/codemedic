@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import shutil
 import subprocess
 import tempfile
@@ -28,10 +29,39 @@ def create_temp_copy(repo_path: str) -> str:
     if not source.is_dir():
         raise FileNotFoundError(f"Repository not found: {repo_path}")
 
-    sandbox_dir = Path(tempfile.mkdtemp(prefix="codemedic_sandbox_"))
-    dest = sandbox_dir / source.name
-    shutil.copytree(source, dest, symlinks=False, ignore_dangling_symlinks=True)
-    return str(dest)
+    # Keep the copy outside the target repository so git apply does not
+    # discover and use the target repository's parent .git directory.
+    sandbox_root = Path.cwd().parent / ".codemedic_sandboxes"
+    sandbox_root.mkdir(parents=True, exist_ok=True)
+    sandbox_dir = Path(tempfile.mkdtemp(
+        prefix="codemedic_sandbox_",
+        dir=sandbox_root,
+    ))
+    try:
+        shutil.copytree(
+            source,
+            sandbox_dir,
+            symlinks=False,
+            ignore_dangling_symlinks=True,
+            ignore=_ignore_sandbox_artifacts,
+            dirs_exist_ok=True,
+        )
+    except Exception:
+        cleanup_sandbox(str(sandbox_dir))
+        raise
+    return str(sandbox_dir)
+
+
+def _ignore_sandbox_artifacts(_directory: str, names: list[str]) -> set[str]:
+    """Exclude caches and VCS metadata that are not needed for patch tests."""
+    ignored = {
+        ".git",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        "__pycache__",
+    }
+    return {name for name in names if name in ignored}
 
 
 def apply_patch(repo_path: str, unified_diff: str) -> dict[str, Any]:
@@ -51,15 +81,28 @@ def apply_patch(repo_path: str, unified_diff: str) -> dict[str, Any]:
           stdout: str
           stderr: str
           returncode: int
+          modified_files: list[str]
     """
     repo = Path(repo_path).resolve()
+    modified_files = verify_patch_boundaries(
+        unified_diff, allowed_files=None
+    )["modified_files"]
+    before_hashes = {
+        file_path: _file_hash(repo / file_path)
+        for file_path in modified_files
+    }
 
     try:
         check_result = subprocess.run(
-            ["git", "apply", "--check", "--ignore-whitespace"],
+            [
+                "git", "apply", "--check", "--unidiff-zero",
+                "--ignore-whitespace",
+            ],
             input=unified_diff,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             cwd=repo,
             timeout=30,
         )
@@ -69,6 +112,7 @@ def apply_patch(repo_path: str, unified_diff: str) -> dict[str, Any]:
                 "stdout": check_result.stdout,
                 "stderr": check_result.stderr,
                 "returncode": check_result.returncode,
+                "modified_files": [],
             }
     except FileNotFoundError:
         return {
@@ -76,6 +120,7 @@ def apply_patch(repo_path: str, unified_diff: str) -> dict[str, Any]:
             "stdout": "",
             "stderr": "git command not found — unable to apply patches",
             "returncode": -1,
+            "modified_files": [],
         }
     except subprocess.TimeoutExpired:
         return {
@@ -83,14 +128,20 @@ def apply_patch(repo_path: str, unified_diff: str) -> dict[str, Any]:
             "stdout": "",
             "stderr": "git apply --check timed out",
             "returncode": -1,
+            "modified_files": [],
         }
 
     try:
         apply_result = subprocess.run(
-            ["git", "apply", "--ignore-whitespace"],
+            [
+                "git", "apply", "--unidiff-zero",
+                "--ignore-whitespace",
+            ],
             input=unified_diff,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             cwd=repo,
             timeout=30,
         )
@@ -99,6 +150,14 @@ def apply_patch(repo_path: str, unified_diff: str) -> dict[str, Any]:
             "stdout": apply_result.stdout,
             "stderr": apply_result.stderr,
             "returncode": apply_result.returncode,
+            "modified_files": (
+                [
+                    file_path for file_path in modified_files
+                    if _file_hash(repo / file_path) != before_hashes[file_path]
+                ]
+                if apply_result.returncode == 0
+                else []
+            ),
         }
     except subprocess.TimeoutExpired:
         return {
@@ -106,7 +165,15 @@ def apply_patch(repo_path: str, unified_diff: str) -> dict[str, Any]:
             "stdout": "",
             "stderr": "git apply timed out",
             "returncode": -1,
+            "modified_files": [],
         }
+
+
+def _file_hash(path: Path) -> str | None:
+    """Return a stable content hash, including a marker for missing files."""
+    if not path.is_file():
+        return None
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def verify_patch_boundaries(
@@ -154,5 +221,13 @@ def cleanup_sandbox(sandbox_path: str) -> None:
         sandbox_path: Path to the sandbox directory to remove.
     """
     path = Path(sandbox_path).resolve()
-    if path.exists():
-        shutil.rmtree(path, ignore_errors=True)
+    if not (
+        path.name.startswith("codemedic_sandbox_")
+        or path.parent.name.startswith("codemedic_sandbox_")
+    ):
+        return
+    root = path
+    if path.parent.name.startswith("codemedic_sandbox_"):
+        root = path.parent
+    if root.exists():
+        shutil.rmtree(root, ignore_errors=True)

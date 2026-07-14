@@ -77,7 +77,7 @@ def run_tests(
         try:
             proc = subprocess.run(
                 cmd, capture_output=True, text=True, cwd=repo,
-                timeout=timeout_s,
+                timeout=timeout_s, encoding="utf-8", errors="replace",
             )
             returncode = proc.returncode
             raw_stdout = proc.stdout or ""

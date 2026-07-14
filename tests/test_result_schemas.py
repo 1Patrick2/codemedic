@@ -28,6 +28,10 @@ class TestEvidenceValidationResult:
         assert r.valid is False
         assert len(r.errors) == 1
 
+    def test_valid_result_rejects_errors(self) -> None:
+        with pytest.raises(ValidationError):
+            EvidenceValidationResult(valid=True, errors=["File not found"])
+
 
 class TestDiffValidationResult:
     def test_valid_result(self) -> None:
@@ -43,11 +47,16 @@ class TestDiffValidationResult:
         assert r.valid is False
         assert r.violations == ["src/outside.py"]
 
+    def test_valid_result_rejects_violations(self) -> None:
+        with pytest.raises(ValidationError):
+            DiffValidationResult(valid=True, violations=["src/outside.py"])
+
 
 class TestPatchApplyResult:
     def test_success(self) -> None:
         r = PatchApplyResult(
             success=True, returncode=0,
+            modified_files=["src/utils/math_helpers.py"],
             sandbox_path="/tmp/sandbox",
         )
         assert r.success is True
@@ -87,6 +96,15 @@ class TestTestResult:
         )
         assert r.timed_out is True
         assert r.duration_ms >= 0
+
+    def test_timeout_rejects_success_return_code(self) -> None:
+        with pytest.raises(ValidationError):
+            TestResult(
+                command_id="test_0",
+                argv=["python", "-m", "pytest"],
+                returncode=0,
+                timed_out=True,
+            )
 
     def test_output_truncated(self) -> None:
         r = TestResult(
@@ -145,6 +163,24 @@ class TestWorkflowRunResult:
                 interrupted=False,
             )
 
+    def test_interrupted_result_requires_waiting_status(self) -> None:
+        with pytest.raises(ValidationError):
+            WorkflowRunResult(
+                task_id="task_abc",
+                thread_id="thread_xyz",
+                workflow_status="completed",
+                interrupted=True,
+            )
+
+    def test_non_interrupted_result_rejects_waiting_status(self) -> None:
+        with pytest.raises(ValidationError):
+            WorkflowRunResult(
+                task_id="task_abc",
+                thread_id="thread_xyz",
+                workflow_status="waiting_patch_review",
+                interrupted=False,
+            )
+
 class TestSerialization:
     """Test round-trip model_dump -> model_validate."""
 
@@ -160,6 +196,7 @@ class TestSerialization:
     def test_patch_apply_result_round_trip(self) -> None:
         original = PatchApplyResult(
             success=True, returncode=0,
+            modified_files=["src/utils/math_helpers.py"],
             sandbox_path="/tmp/sbox",
         )
         data = original.model_dump()

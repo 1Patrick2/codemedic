@@ -23,3 +23,20 @@
 - mypy：29 个源码文件通过。
 - pip check：No broken requirements found。
 - 未提交、未 Push；B5 失败反馈、Hybrid Retrieval、Streamlit、Evaluation 均未修改。
+
+## Real Function Proof Round
+
+- 修复 Patch Review Retry 上限语义：最后一次生成的 Patch 仍可人工批准或拒绝。
+- Fixer Retry 现在接收 previous patch、Diff/测试失败反馈、人工反馈和 Verifier summary。
+- PatchProposal 的声明文件校验集中到 `patch_validation_node()`；Final Status 额外校验 Diff 文件集合与 Sandbox 实际 hash 变化一致。
+- `apply_patch()` 通过修改前后文件 hash 生成 `modified_files`；Sandbox 在 Apply 失败、异常和测试完成后清理。
+- Intake 对不存在仓库 Fail-Closed；Evidence、Diff、Test、Workflow Result 增加跨字段语义校验。
+- 新增真实 Demo Sandbox/Test Runner E2E 和真实 Retry E2E。当前 Demo 实际包含 `data_service.py` 的两个故障以及 `math_helpers.py` 的故障，因此真实 Patch 修改两个文件并让全量 Demo pytest 通过。
+
+## Real Function Proof Validation
+
+- `conda run -n codemedic python -m pytest -q`：112 passed、1 skipped，包含真实 Sandbox 和 Retry E2E；skip 为既有真实模型 smoke test。
+- `conda run -n codemedic python -m ruff check .`：通过。
+- `conda run -n codemedic python -m mypy codemedic`：29 个源码文件通过。
+- `conda run -n codemedic python -m pip check`：No broken requirements found。
+- 保留既有 `create_react_agent` deprecated warning；不在本轮范围内。

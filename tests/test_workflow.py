@@ -229,24 +229,21 @@ class TestWorkflowGraph:
         compiled = graph.compile()
         assert compiled is not None
 
-    @patch("codemedic.tools.test_runner.run_tests")
-    @patch("codemedic.tools.sandbox.apply_patch")
-    @patch("codemedic.tools.sandbox.create_temp_copy")
     @patch("codemedic.agents.fixer.run_fixer")
     @patch("codemedic.graph.nodes.run_investigator")
     def test_workflow_runs_end_to_end(
         self,
         mock_investigator,
         mock_fixer,
-        mock_temp_copy,
-        mock_apply,
-        mock_run_tests,
         initial_state: RepairState
     ) -> None:
         """Full workflow with mocked investigator, fixer, and sandbox."""
         mock_investigator.return_value = DiagnosisResult(
-            suspected_files=["src/utils/math_helpers.py"],
-            root_cause="Variable name typo in factorial()",
+            suspected_files=[
+                "src/services/data_service.py",
+                "src/utils/math_helpers.py",
+            ],
+            root_cause="Several deliberate Demo bugs cause test failures",
             evidence=[
                 Evidence(
                     file_path="src/utils/math_helpers.py",
@@ -254,42 +251,27 @@ class TestWorkflowGraph:
                     line_end=43,
                     excerpt="resut = 1",
                     reason="NameError due to typo: resut should be result",
-                )
+                ),
+                Evidence(
+                    file_path="src/services/data_service.py",
+                    line_start=23,
+                    line_end=23,
+                    excerpt="max_retries: int = \"three\"",
+                    reason="Config declares an int but defaults to a string",
+                ),
             ],
             confidence=0.85,
             missing_information=[],
         )
         from codemedic.schemas.patch import PatchProposal
+        from tests.test_real_sandbox_e2e import FIX_FILES, FIX_PATCH
         mock_fixer.return_value = PatchProposal(
-            modified_files=["src/utils/math_helpers.py"],
-            unified_diff="\n".join([
-                "--- a/src/utils/math_helpers.py",
-                "+++ b/src/utils/math_helpers.py",
-                "@@ -40,6 +40,6 @@ def factorial(n: int) -> int:",
-                "     if n == 0:",
-                "         return 1",
-                "-    resut = 1",
-                "+    result = 1",
-                "     for i in range(1, n + 1):",
-                "-        resut *= i",
-                "+        result *= i",
-                "-    return resut",
-                "+    return result",
-            ]),
+            modified_files=FIX_FILES,
+            unified_diff=FIX_PATCH,
             rationale="Fix variable name typo",
             risks=["Low risk - simple rename"],
             test_suggestions=["python -m pytest tests/"],
         )
-        mock_temp_copy.return_value = "/tmp/sandbox_test"
-        mock_apply.return_value = {"success": True, "stdout": "", "stderr": "", "returncode": 0}
-        from codemedic.schemas.results import TestResult
-        mock_run_tests.return_value = [TestResult(
-            command_id="test_0",
-            argv=["python", "-m", "pytest", "-q"],
-            returncode=0,
-            stdout="all tests passed",
-        )]
-
         from langgraph.checkpoint.memory import MemorySaver
         from langgraph.types import Command
 
@@ -316,8 +298,89 @@ class TestWorkflowGraph:
         assert result["diagnosis"].confidence == 0.85
         assert result["thread_id"] == "test_e2e"
         assert result["patch_apply_result"]["success"] is True
+        assert result["patch_apply_result"]["modified_files"] == FIX_FILES
         assert result["test_results"]
         assert all(item["returncode"] == 0 for item in result["test_results"])
+
+    @patch("codemedic.graph.nodes.run_investigator")
+    @patch("codemedic.agents.fixer.run_fixer")
+    def test_real_retry_uses_failure_feedback_and_allows_second_approval(
+        self,
+        mock_fixer,
+        mock_investigator,
+        initial_state: RepairState,
+    ) -> None:
+        """A failed real sandbox test produces feedback for a second patch."""
+        from codemedic.schemas.patch import PatchProposal
+        from tests.test_real_sandbox_e2e import (
+            FIRST_RETRY_PATCH,
+            FIX_FILES,
+            FIX_PATCH,
+        )
+
+        mock_investigator.return_value = DiagnosisResult(
+            suspected_files=FIX_FILES,
+            root_cause="Several deliberate Demo bugs cause test failures",
+            evidence=[
+                Evidence(
+                    file_path="src/utils/math_helpers.py",
+                    line_start=40,
+                    line_end=43,
+                    excerpt="resut = 1",
+                    reason="Variable typo breaks factorial",
+                ),
+                Evidence(
+                    file_path="src/services/data_service.py",
+                    line_start=23,
+                    line_end=23,
+                    excerpt="max_retries: int = \"three\"",
+                    reason="Config default violates its annotation",
+                ),
+            ],
+            confidence=0.9,
+            missing_information=[],
+        )
+        mock_fixer.side_effect = [
+            PatchProposal(
+                modified_files=["src/utils/math_helpers.py"],
+                unified_diff=FIRST_RETRY_PATCH,
+                rationale="Fix the first factorial typo",
+                risks=[],
+                test_suggestions=[],
+            ),
+            PatchProposal(
+                modified_files=FIX_FILES,
+                unified_diff=FIX_PATCH,
+                rationale="Fix all reported Demo failures",
+                risks=[],
+                test_suggestions=[],
+            ),
+        ]
+
+        from langgraph.checkpoint.memory import MemorySaver
+        from langgraph.types import Command
+
+        from codemedic.graph.builder import compile_workflow
+
+        initial_state["thread_id"] = "test_real_retry"
+        agent = compile_workflow(checkpointer=MemorySaver())
+        config = {"configurable": {"thread_id": "test_real_retry"}}
+
+        first = agent.invoke(initial_state, config)
+        assert first["__interrupt__"][0].value["review_type"] == "patch"
+        first = agent.invoke(Command(resume={"decision": "approved"}), config)
+
+        second_review = first["__interrupt__"][0].value
+        assert second_review["review_type"] == "patch"
+        assert second_review["options"] == ["approved", "rejected"]
+        assert first["fix_attempt_count"] == 2
+        assert first["previous_patch"] is not None
+        assert "failed" in first["failure_feedback"]
+
+        completed = agent.invoke(Command(resume={"decision": "approved"}), config)
+
+        assert completed["final_status"] == "通过"
+        assert completed["patch_apply_result"]["modified_files"] == FIX_FILES
 
     @patch("codemedic.graph.nodes.run_investigator")
     @patch("codemedic.agents.fixer.run_fixer")

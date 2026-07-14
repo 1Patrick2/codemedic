@@ -24,6 +24,17 @@
 - [x] Phase 4: 形成 Core Consistency Fix implementation plan
 - [x] Phase 5: 按计划推进 Router、Retry、Schema、Workflow 和 E2E 修复
 - [x] Phase 6: 运行目标测试与完整回归验证，更新进度记录
+- [x] Phase 7: 按最新专家意见完成真实功能证明轮
+
+## Real Function Proof Round
+
+- [x] 修复 Patch Review 的 Retry 上限：达到上限仍可 approved/rejected，不再提供 retry
+- [x] 将 previous patch、验证/测试失败反馈、人工反馈和 Verifier summary 传给 Fixer
+- [x] 将 PatchProposal 元数据校验集中到 patch_validation_node
+- [x] 通过修改前后文件 hash 生成真实 modified_files，并校验 Final Status 的文件集合一致性
+- [x] 增加 Intake Fail-Closed、跨字段 Schema Validator 和 Sandbox 失败清理
+- [x] 建立真实 Demo Sandbox/Test Runner E2E 与真实 Retry E2E
+- [ ] 合并前删除包含本地环境信息的工作文件
 
 ## Errors Encountered
 
@@ -37,6 +48,6 @@
 
 ## Current Status
 
-- Current phase: Complete
+- Current phase: Real Function Proof Round complete
 - Last updated: 2026-07-14
-- Next action: 等待用户审查本轮未提交变更；B5 失败反馈不在本轮范围内。
+- Next action: 用户审查本轮未提交变更；合并前清理 findings.md、progress.md、task_plan.md。

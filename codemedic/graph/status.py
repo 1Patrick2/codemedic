@@ -41,6 +41,10 @@ def derive_final_status(state: RepairState) -> FinalStatus:
     if apply_result is None or not apply_result.success:
         return "人工复核"
 
+    # The sandbox must report the same files that the validated diff declared.
+    if sorted(apply_result.modified_files) != sorted(diff.modified_files):
+        return "人工复核"
+
     # 4-6. Test results
     test_results = get_test_results(state)
     if not test_results:

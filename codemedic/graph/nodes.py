@@ -44,6 +44,35 @@ def intake(state: RepairState) -> dict[str, Any]:
     }
 
 
+def _build_retry_feedback(state: RepairState) -> str | None:
+    """Collect concrete validation and test feedback for the next Fixer call."""
+    from codemedic.schemas.adapters import get_diff_validation, get_test_results
+
+    sections: list[str] = []
+    diff = get_diff_validation(state)
+    if diff is not None and not diff.valid:
+        errors = diff.errors or diff.violations
+        if errors:
+            sections.append("Patch validation failures:\n- " + "\n- ".join(errors))
+
+    failed_tests = [
+        result for result in get_test_results(state)
+        if result.returncode != 0 or result.timed_out
+    ]
+    for result in failed_tests:
+        output = "\n".join(part for part in (result.stdout, result.stderr) if part)
+        sections.append(
+            f"Test {result.command_id} failed (returncode={result.returncode}, "
+            f"timed_out={result.timed_out}):\n{output[:4000]}"
+        )
+
+    review_reason = state.get("review_reason")
+    if state.get("human_decision") == "retry" and review_reason:
+        sections.append(f"Human feedback:\n{review_reason}")
+
+    return "\n\n".join(sections) if sections else None
+
+
 def mark_diagnosis_review_waiting(state: RepairState) -> dict[str, Any]:
     """Persist the diagnosis-review status before interrupting."""
     return {"workflow_status": "waiting_diagnosis_review"}
@@ -190,41 +219,14 @@ def fixer_node(state: RepairState) -> dict[str, Any]:
             issue=state["issue"],
             diagnosis=diagnosis,
             context=context_str,
+            previous_patch=state.get("previous_patch"),
+            failure_feedback=state.get("failure_feedback"),
+            human_feedback=state.get("human_feedback"),
+            verifier_summary=state.get("verifier_summary"),
         )
-
-        from codemedic.validation.diff import (
-            check_declared_files_match_diff,
-            validate_diff,
-        )
-
-        patch_dict = patch.model_dump()
-        allowed = state.get("allowed_files")
-        diff_result = validate_diff(
-            patch_dict.get("unified_diff", ""),
-            allowed_files=allowed,
-        )
-
-        mismatches = check_declared_files_match_diff(
-            patch_dict.get("modified_files", []),
-            patch_dict.get("unified_diff", ""),
-        )
-
-        errors: list[str] = []
-        if not diff_result["valid"]:
-            errors.extend(diff_result["errors"])
-        if mismatches:
-            errors.extend(mismatches)
-
-        if errors:
-            return {
-                "patch": patch_dict,
-                "fix_attempt_count": fix_attempt_count,
-                "workflow_status": "running",
-                "errors": state.get("errors", []) + errors,
-            }
 
         return {
-            "patch": patch_dict,
+            "patch": patch.model_dump(),
             "fix_attempt_count": fix_attempt_count,
             "workflow_status": "running",
         }
@@ -248,6 +250,12 @@ def prepare_fix_retry(state: RepairState) -> dict[str, Any]:
         "retry_count": state.get("retry_count", 0) + 1,
         "patch": None,
         "diff_validation": None,
+        "failure_feedback": _build_retry_feedback(state),
+        "human_feedback": (
+            state.get("review_reason")
+            if state.get("human_decision") == "retry"
+            else state.get("human_feedback")
+        ),
         "workflow_status": "running",
     }
 
@@ -303,8 +311,8 @@ def patch_review_node(state: RepairState) -> dict[str, Any]:
     Triggered after Fixer generates a valid patch. Shows diff and
     allows approve/reject/retry decisions.
 
-    If retry count exceeds the maximum, skips the interrupt and
-    automatically routes to rejected.
+    Once retry capacity is exhausted, the review remains available but
+    no longer offers another retry option.
 
     Returns:
         human_decision and review_reason.
@@ -312,16 +320,14 @@ def patch_review_node(state: RepairState) -> dict[str, Any]:
     patch = state.get("patch")
     diag = state.get("diagnosis")
 
-    # Check retry limit — skip interrupt if exceeded
     retry_count = state.get("retry_count", 0)
     max_retries = settings.max_fixer_retries
-    if retry_count >= max_retries:
-        return {
-            "human_decision": "rejected",
-            "review_reason": f"Retry limit ({max_retries}) exceeded",
-        }
 
     from langgraph.types import interrupt
+
+    options = ["approved", "rejected"]
+    if retry_count < max_retries:
+        options.append("retry")
 
     interrupt_value = {
         "review_type": "patch",
@@ -329,7 +335,7 @@ def patch_review_node(state: RepairState) -> dict[str, Any]:
         "issue": state["issue"],
         "root_cause": diag.root_cause if diag else "N/A",
         "patch": patch,
-        "options": ["approved", "rejected", "retry"],
+        "options": options,
     }
 
     human_input = interrupt(interrupt_value)
@@ -347,6 +353,7 @@ def patch_review_node(state: RepairState) -> dict[str, Any]:
     return {
         "human_decision": decision,
         "review_reason": reason,
+        "human_feedback": reason if decision == "retry" else state.get("human_feedback"),
     }
 
 
@@ -370,14 +377,24 @@ def patch_validation_node(state: RepairState) -> dict[str, Any]:
             ).model_dump(),
         }
 
-    from codemedic.validation.diff import validate_diff
+    from codemedic.validation.diff import (
+        check_declared_files_match_diff,
+        validate_diff,
+    )
 
     unified_diff = patch.get("unified_diff", "") if isinstance(patch, dict) else ""
 
     allowed = state.get("allowed_files")
-    result = DiffValidationResult.model_validate(
-        validate_diff(unified_diff, allowed_files=allowed)
+    raw_result = validate_diff(unified_diff, allowed_files=allowed)
+    mismatches = check_declared_files_match_diff(
+        patch.get("modified_files", []) if isinstance(patch, dict) else [],
+        unified_diff,
     )
+    raw_result["errors"].extend(mismatches)
+    if mismatches:
+        raw_result["valid"] = False
+
+    result = DiffValidationResult.model_validate(raw_result)
 
     return {"diff_validation": result.model_dump()}
 
@@ -417,10 +434,15 @@ def final_report_node(state: RepairState) -> dict[str, Any]:
 
     final_status = derive_final_status(state)
 
+    workflow_status = "failed" if any(
+        error.startswith("Repository path not found:")
+        for error in state.get("errors", [])
+    ) else "completed"
+
     return {
         "final_report": report,
         "final_status": final_status,
-        "workflow_status": "completed",
+        "workflow_status": workflow_status,
         "verifier_summary": state.get("verifier_summary"),
         "sandbox_path": state.get("sandbox_path"),
     }
@@ -436,7 +458,12 @@ def apply_patch_node(state: RepairState) -> dict[str, Any]:
         patch_apply_result and sandbox_path (on success).
     """
     from codemedic.schemas.results import PatchApplyResult
-    from codemedic.tools.sandbox import apply_patch, create_temp_copy, verify_patch_boundaries
+    from codemedic.tools.sandbox import (
+        apply_patch,
+        cleanup_sandbox,
+        create_temp_copy,
+        verify_patch_boundaries,
+    )
 
     patch = state.get("patch")
     if patch is None:
@@ -471,13 +498,25 @@ def apply_patch_node(state: RepairState) -> dict[str, Any]:
         sandbox_path = create_temp_copy(state["repository_path"])
         raw = apply_patch(sandbox_path, unified_diff)
 
+        if not raw["success"]:
+            cleanup_sandbox(sandbox_path)
+            result = PatchApplyResult(
+                success=False,
+                returncode=raw["returncode"],
+                stdout=raw.get("stdout", ""),
+                stderr=raw.get("stderr", ""),
+                modified_files=raw.get("modified_files", []),
+                sandbox_path=None,
+            )
+            return {"patch_apply_result": result.model_dump(), "sandbox_path": None}
+
         result = PatchApplyResult(
-            success=raw["success"],
+            success=True,
             returncode=raw["returncode"],
             stdout=raw.get("stdout", ""),
             stderr=raw.get("stderr", ""),
             modified_files=raw.get("modified_files", []),
-            sandbox_path=sandbox_path if raw["success"] else None,
+            sandbox_path=sandbox_path,
         )
 
         return {
@@ -485,6 +524,8 @@ def apply_patch_node(state: RepairState) -> dict[str, Any]:
             "sandbox_path": result.sandbox_path,
         }
     except Exception as exc:
+        if "sandbox_path" in locals():
+            cleanup_sandbox(sandbox_path)
         result = PatchApplyResult(
             success=False, returncode=-1,
             stderr=str(exc),
@@ -520,6 +561,10 @@ def run_tests_node(state: RepairState) -> dict[str, Any]:
             returncode=-1, stderr=f"Test execution error: {exc}",
         )
         return {"test_results": [err_result.model_dump()]}
+    finally:
+        from codemedic.tools.sandbox import cleanup_sandbox
+
+        cleanup_sandbox(str(sandbox_path))
 
 
 def verifier_node(state: RepairState) -> dict[str, Any]:

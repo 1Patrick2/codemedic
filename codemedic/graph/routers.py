@@ -85,6 +85,17 @@ DiagnosisReviewRoute = Literal["accept_diagnosis", "reject"]
 PatchValidationRoute = Literal["valid", "invalid_retry", "invalid_final"]
 
 PatchApplyRoute = Literal["success", "failed"]
+IntakeRoute = Literal["valid", "invalid"]
+
+
+def intake_router(state: RepairState) -> IntakeRoute:
+    """Stop before retrieval when intake reports an invalid repository."""
+    if any(
+        error.startswith("Repository path not found:")
+        for error in state.get("errors", [])
+    ):
+        return "invalid"
+    return "valid"
 
 
 def patch_apply_router(state: RepairState) -> PatchApplyRoute:

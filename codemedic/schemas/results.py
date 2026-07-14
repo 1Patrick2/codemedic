@@ -22,6 +22,12 @@ class EvidenceValidationResult(BaseModel):
         description="Evidence items that passed validation",
     )
 
+    @model_validator(mode="after")
+    def validate_consistency(self) -> "EvidenceValidationResult":
+        if self.valid and self.errors:
+            raise ValueError("Valid evidence cannot contain errors")
+        return self
+
 
 class DiffValidationResult(BaseModel):
     """Result of Unified Diff security validation."""
@@ -36,6 +42,12 @@ class DiffValidationResult(BaseModel):
         default_factory=list,
         description="Security violations found",
     )
+
+    @model_validator(mode="after")
+    def validate_consistency(self) -> "DiffValidationResult":
+        if self.valid and (self.errors or self.violations):
+            raise ValueError("Valid diff cannot contain errors or violations")
+        return self
 
 
 class PatchApplyResult(BaseModel):
@@ -61,6 +73,8 @@ class PatchApplyResult(BaseModel):
             raise ValueError("Successful patch application must have returncode 0")
         if self.success and self.sandbox_path is None:
             raise ValueError("Successful patch application requires sandbox_path")
+        if self.success and not self.modified_files:
+            raise ValueError("Successful patch application must report modified_files")
         return self
 
 
@@ -77,6 +91,12 @@ class TestResult(BaseModel):
     timed_out: bool = Field(default=False, description="Whether the test timed out")
     duration_ms: int = Field(default=0, ge=0, description="Execution duration in milliseconds")
     output_truncated: bool = Field(default=False, description="Whether output was truncated")
+
+    @model_validator(mode="after")
+    def validate_timeout_state(self) -> "TestResult":
+        if self.timed_out and self.returncode == 0:
+            raise ValueError("Timed out test cannot have returncode 0")
+        return self
 
 
 WorkflowStatus = Literal[
@@ -96,3 +116,15 @@ class WorkflowRunResult(BaseModel):
     workflow_status: WorkflowStatus = Field(description="Current workflow status")
     interrupted: bool = Field(description="Whether the workflow was interrupted")
     state: dict[str, Any] = Field(default_factory=dict, description="Full workflow state snapshot")
+
+    @model_validator(mode="after")
+    def validate_status_state(self) -> "WorkflowRunResult":
+        waiting = self.workflow_status in {
+            "waiting_diagnosis_review",
+            "waiting_patch_review",
+        }
+        if self.interrupted != waiting:
+            raise ValueError(
+                "WorkflowRunResult interrupted must match waiting workflow_status"
+            )
+        return self

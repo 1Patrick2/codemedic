@@ -50,8 +50,8 @@ def diagnosis_high_conf() -> DiagnosisResult:
             Evidence(
                 file_path="src/utils/math_helpers.py",
                 line_start=40,
-                line_end=43,
-                excerpt="resut vs result",
+                line_end=40,
+                excerpt="resut = 1",
                 reason="NameError due to typo",
             )
         ],
@@ -259,6 +259,13 @@ class TestWorkflowGraph:
                     excerpt="max_retries: int = \"three\"",
                     reason="Config declares an int but defaults to a string",
                 ),
+                Evidence(
+                    file_path="src/services/data_service.py",
+                    line_start=44,
+                    line_end=44,
+                    excerpt="zip(values, weight)",
+                    reason="Undefined weight variable causes NameError",
+                ),
             ],
             confidence=0.85,
             missing_information=[],
@@ -335,6 +342,13 @@ class TestWorkflowGraph:
                     line_end=23,
                     excerpt="max_retries: int = \"three\"",
                     reason="Config default violates its annotation",
+                ),
+                Evidence(
+                    file_path="src/services/data_service.py",
+                    line_start=44,
+                    line_end=44,
+                    excerpt="zip(values, weight)",
+                    reason="Undefined weight variable causes NameError",
                 ),
             ],
             confidence=0.9,

@@ -74,8 +74,10 @@ def _sha256(path: Path) -> str:
 
 
 def test_real_patch_apply_and_sandbox_tests() -> None:
-    target = DEMO_REPO / TARGET
-    original_hash = _sha256(target)
+    original_hashes = {
+        path: _sha256(DEMO_REPO / path)
+        for path in FIX_FILES
+    }
 
     original_test = subprocess.run(
         [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider"],
@@ -103,5 +105,8 @@ def test_real_patch_apply_and_sandbox_tests() -> None:
     finally:
         cleanup_sandbox(sandbox)
 
-    assert _sha256(target) == original_hash
+    assert {
+        path: _sha256(DEMO_REPO / path)
+        for path in FIX_FILES
+    } == original_hashes
     assert not Path(sandbox).exists()

@@ -34,16 +34,16 @@ Investigator → Fixer → Human Review → Sandbox → Verifier 闭环，覆盖
 
 ## 当前状态
 
-已完成 CodeMedic 三 Agent 工作流骨架以及仓库路径、Evidence、Diff、测试命令等基础安全约束；当前正在完善 Structured Output、Checkpoint 恢复、失败反馈重试及端到端验证。
+核心 Graph 路由、Checkpoint 恢复、失败反馈重试、Patch/Sandbox/Test 数据契约和确定性 E2E 已完成；真实 LLM Smoke Test 与 Provider 原生 Structured Output 仍未纳入本阶段。
 
 | 阶段 | 内容 | 状态 |
 |------|------|------|
 | Stage 0 | 环境、依赖、项目骨架 | ✅ 基本完成 |
-| Stage 1 | Investigator 工具 + CLI + Trace | ⚠️ 工具可用，Structured Output 未完成 |
+| Stage 1 | Investigator 工具 + CLI + Trace | ⚠️ JSON + Pydantic 主路径可用，Provider 原生 Structured Output 未完成 |
 | Stage 2 | LangGraph StateGraph + Evidence Gate | ✅ 基本完成 |
-| Stage 3 | Fixer + Human Review (Interrupt) | ⚠️ Interrupt 可用，Resume 接口不完整 |
-| Stage 4 | Sandbox + Test Runner + Verifier | ⚠️ git apply 和 Test Runner 可用，安全与状态判定未闭合 |
-| Phase A | 安全加固 | 🔄 进行中 |
+| Stage 3 | Fixer + Human Review (Interrupt) | ✅ Interrupt / Resume / Retry 反馈已接通 |
+| Stage 4 | Sandbox + Test Runner + Verifier | ✅ 真实 Patch、测试和最终状态判定已验证 |
+| Phase A | 安全加固 | ✅ 完成 |
 
 > 当前项目适合作为工程演示和技术面试的原型展示，不适合直接用于生产环境或不可信的第三方代码。
 
@@ -66,14 +66,21 @@ python -m codemedic.cli investigate \
   --issue "factorial function returns NameError" \
   --repo-path ./demo_repos/sample_project
 
-# 运行完整工作流（Python）
+# 运行完整工作流（Python；示例自动接受人工 Review）
 python -c "
-from codemedic.graph.builder import run_workflow
+from codemedic.graph.builder import resume_workflow, run_workflow
 result = run_workflow(
     issue='Find all bugs in sample project',
     repository_path='./demo_repos/sample_project',
 )
-print(result['final_status'])
+while result.interrupted:
+    decision = (
+        'accept_diagnosis'
+        if result.workflow_status == 'waiting_diagnosis_review'
+        else 'approved'
+    )
+    result = resume_workflow(decision, thread_id=result.thread_id)
+print(result.state.get('final_status'))
 "
 
 # 测试
@@ -108,7 +115,7 @@ codemedic/
 │   ├── tracing/
 │   │   └── local_trace.py   # JSONL Trace
 │   └── config.py            # pydantic-settings 配置
-├── tests/                   # 68 个测试（单元 + 安全 + 工作流）
+├── tests/                   # 单元、安全、Graph 集成与真实 Sandbox E2E
 ├── docs/
 │   ├── architecture.md      # 架构设计文档
 │   └── baseline_audit.md    # 基线审计
@@ -120,7 +127,7 @@ codemedic/
 
 当前通过 OpenAI-compatible API 使用模型（已测试 DeepSeek V4 Flash via OpenCode Go）。
 
-> **注意**：当前 Console Go 套餐不支持原生 Structured Output，Investigator 采用文本提示 + 正则解析方式提取诊断结果。解析失败时 confidence=0，路由到人工复核。这不是完整的 Structured Output 实现，后续接入支持 `response_format` 的 Provider 后将升级到 `langchain.agents.create_agent(response_format=DiagnosisResult)`。
+> **注意**：Investigator 当前要求模型输出 JSON，并优先使用 `DiagnosisResult.model_validate()` 校验；JSON 无法解析或校验失败时才使用正则兼容性降级路径。当前尚未迁移到 Provider 原生 Structured Output，解析失败时 confidence=0 并路由到人工复核。
 
 ## 安全边界
 

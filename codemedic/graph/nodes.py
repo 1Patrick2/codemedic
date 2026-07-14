@@ -272,6 +272,9 @@ def diagnosis_review_node(state: RepairState) -> dict[str, Any]:
     """
     from langgraph.types import interrupt
 
+    from codemedic.tools.context import RepositoryContext
+    from codemedic.validation.evidence import validate_approved_files
+
     diag = state.get("diagnosis")
 
     interrupt_value = {
@@ -285,23 +288,60 @@ def diagnosis_review_node(state: RepairState) -> dict[str, Any]:
             "evidence_count": len(diag.evidence) if diag else 0,
         },
         "options": ["accept_diagnosis", "reject"],
+        "approved_files": {
+            "description": (
+                "Optional repository-relative files to authorize for this patch. "
+                "Every file must exist within the repository."
+            ),
+            "default": [],
+        },
     }
 
     human_input = interrupt(interrupt_value)
 
     if isinstance(human_input, dict):
-        decision = human_input.get("decision", "reject")
+        raw_decision = human_input.get("decision", "reject")
         reason = human_input.get("reason", "")
+        approved_input = human_input.get("approved_files", [])
     elif isinstance(human_input, str):
-        decision = human_input
+        raw_decision = human_input
         reason = ""
+        approved_input = []
     else:
-        decision = "reject"
+        raw_decision = "reject"
         reason = "Invalid input format"
+        approved_input = []
+
+    decision = "accept_diagnosis" if raw_decision == "accept_diagnosis" else "reject"
+    if not isinstance(reason, str):
+        reason = ""
+
+    approved_files: list[str] = []
+    allowed_files = list(state.get("allowed_files", []))
+    errors = list(state.get("errors", []))
+    if decision == "accept_diagnosis":
+        try:
+            ctx = RepositoryContext(state["repository_path"])
+            approved_files, authorization_errors = validate_approved_files(
+                approved_input, ctx
+            )
+        except (NotADirectoryError, OSError) as exc:
+            authorization_errors = [f"Could not validate approved_files: {exc}"]
+
+        if authorization_errors:
+            decision = "reject"
+            errors.extend(
+                f"Invalid approved_files: {error}" for error in authorization_errors
+            )
+        else:
+            allowed_files = sorted(set(allowed_files).union(approved_files))
 
     return {
         "human_decision": decision,
         "review_reason": reason,
+        "approved_files": approved_files,
+        "allowed_files": allowed_files,
+        "errors": errors,
     }
 
 
@@ -341,14 +381,25 @@ def patch_review_node(state: RepairState) -> dict[str, Any]:
     human_input = interrupt(interrupt_value)
 
     if isinstance(human_input, dict):
-        decision = human_input.get("decision", "rejected")
+        raw_decision = human_input.get("decision", "rejected")
         reason = human_input.get("reason", "")
     elif isinstance(human_input, str):
-        decision = human_input
+        raw_decision = human_input
         reason = ""
     else:
-        decision = "rejected"
+        raw_decision = "rejected"
         reason = "Invalid input format"
+
+    decision = (
+        raw_decision
+        if isinstance(raw_decision, str)
+        and raw_decision in {"approved", "rejected"}
+        else "rejected"
+    )
+    if isinstance(raw_decision, str) and raw_decision == "retry" and retry_count < max_retries:
+        decision = "retry"
+    if not isinstance(reason, str):
+        reason = ""
 
     return {
         "human_decision": decision,

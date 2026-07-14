@@ -55,6 +55,8 @@ class RepairState(TypedDict):
     # ── Limits ──────────────────────────────────────────────────────
     allowed_files: list[str]
     """Files the Fixer is allowed to modify."""
+    approved_files: list[str]
+    """Files explicitly authorized by a human during Diagnosis Review."""
     investigation_steps: int
     """Number of investigation steps taken so far."""
     retrieval_round: int
@@ -111,6 +113,7 @@ def create_initial_state(
         test_results=[],
         verifier_summary=None,
         allowed_files=[],
+        approved_files=[],
         investigation_steps=0,
         retrieval_round=0,
         retry_count=0,

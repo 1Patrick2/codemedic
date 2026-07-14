@@ -19,6 +19,51 @@ ValidationResult = dict[str, Any]
 """
 
 
+def validate_approved_files(
+    approved_files: object,
+    ctx: RepositoryContext,
+) -> tuple[list[str], list[str]]:
+    """Validate and canonicalize human-authorized repository files.
+
+    Authorization is all-or-nothing: any invalid entry rejects the complete
+    list so a partially trusted request cannot expand the patch boundary.
+    """
+    if not isinstance(approved_files, list):
+        return [], ["approved_files must be a list"]
+
+    errors: list[str] = []
+    canonical: set[str] = set()
+    for item in approved_files:
+        if not isinstance(item, str) or not item.strip():
+            errors.append("approved_files entries must be non-empty strings")
+            continue
+
+        relative = item.strip()
+        if relative.startswith(("/", "\\")):
+            errors.append(f"[{relative}] Absolute file path is not allowed")
+            continue
+        if ".." in relative.replace("\\", "/").split("/"):
+            errors.append(f"[{relative}] Path traversal detected")
+            continue
+
+        resolved = ctx.resolve_path(relative)
+        if resolved is None:
+            errors.append(f"[{relative}] File is not within the repository")
+            continue
+        if not resolved.exists():
+            errors.append(f"[{relative}] File not found")
+            continue
+        if not resolved.is_file():
+            errors.append(f"[{relative}] Path is a directory, not a file")
+            continue
+
+        canonical.add(resolved.relative_to(ctx.root).as_posix())
+
+    if errors:
+        return [], errors
+    return sorted(canonical), []
+
+
 def validate_evidence(
     diagnosis: DiagnosisResult,
     ctx: RepositoryContext,

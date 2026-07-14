@@ -17,6 +17,7 @@ from codemedic.graph.builder import (
     run_workflow,
 )
 from codemedic.graph.nodes import (
+    diagnosis_review_node,
     fixer_node,
     intake,
     patch_review_node,
@@ -27,6 +28,7 @@ from codemedic.graph.nodes import (
 from codemedic.graph.routers import (
     INSUFFICIENT,
     UNCERTAIN,
+    diagnosis_review_router,
     intake_router,
     patch_apply_router,
     patch_review_router,
@@ -193,6 +195,76 @@ def test_patch_review_rejects_direct_retry_at_retry_limit() -> None:
     state["human_decision"] = "retry"
 
     assert patch_review_router(state) == "rejected"
+
+
+def test_initial_state_starts_without_approved_files() -> None:
+    state = create_initial_state("issue", DEMO_REPO)
+
+    assert state["approved_files"] == []
+
+
+def test_diagnosis_review_merges_valid_approved_files() -> None:
+    state = create_initial_state("issue", DEMO_REPO)
+    state["allowed_files"] = ["src/utils/math_helpers.py"]
+
+    with patch(
+        "langgraph.types.interrupt",
+        return_value={
+            "decision": "accept_diagnosis",
+            "approved_files": ["src/services/data_service.py"],
+            "reason": "Authorize the second Demo file",
+        },
+    ):
+        result = diagnosis_review_node(state)
+
+    assert result["human_decision"] == "accept_diagnosis"
+    assert result["approved_files"] == ["src/services/data_service.py"]
+    assert result["allowed_files"] == [
+        "src/services/data_service.py",
+        "src/utils/math_helpers.py",
+    ]
+    assert diagnosis_review_router({**state, **result}) == "accept_diagnosis"
+
+
+def test_diagnosis_review_rejects_invalid_approved_files_without_partial_merge() -> None:
+    state = create_initial_state("issue", DEMO_REPO)
+    state["allowed_files"] = ["src/utils/math_helpers.py"]
+
+    with patch(
+        "langgraph.types.interrupt",
+        return_value={
+            "decision": "accept_diagnosis",
+            "approved_files": ["src/services/data_service.py", "../outside.py"],
+        },
+    ):
+        result = diagnosis_review_node(state)
+
+    assert result["human_decision"] == "reject"
+    assert result["approved_files"] == []
+    assert result["allowed_files"] == ["src/utils/math_helpers.py"]
+    assert diagnosis_review_router({**state, **result}) == "reject"
+
+
+def test_review_nodes_normalize_unknown_decisions() -> None:
+    state = create_initial_state("issue", DEMO_REPO)
+
+    with patch("langgraph.types.interrupt", return_value={"decision": "unknown"}):
+        diagnosis_result = diagnosis_review_node(state)
+        patch_result = patch_review_node({**state, "patch": {"unified_diff": "valid"}})
+
+    assert diagnosis_result["human_decision"] == "reject"
+    assert patch_result["human_decision"] == "rejected"
+    assert diagnosis_review_router({**state, **diagnosis_result}) == "reject"
+    assert patch_review_router({**state, **patch_result}) == "rejected"
+
+
+def test_patch_review_normalizes_non_string_decision() -> None:
+    state = create_initial_state("issue", DEMO_REPO)
+
+    with patch("langgraph.types.interrupt", return_value={"decision": []}):
+        result = patch_review_node({**state, "patch": {"unified_diff": "valid"}})
+
+    assert result["human_decision"] == "rejected"
 
 
 def test_run_tests_clears_sandbox_path_after_cleanup() -> None:

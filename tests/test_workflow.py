@@ -26,6 +26,7 @@ from codemedic.graph.routers import (
 )
 from codemedic.graph.state import RepairState, create_initial_state
 from codemedic.schemas.diagnosis import DiagnosisResult, Evidence
+from tests.factories import build_demo_diagnosis
 
 DEMO_REPO = str(Path(__file__).resolve().parent.parent / "demo_repos" / "sample_project")
 
@@ -238,38 +239,7 @@ class TestWorkflowGraph:
         initial_state: RepairState
     ) -> None:
         """Full workflow with mocked investigator, fixer, and sandbox."""
-        mock_investigator.return_value = DiagnosisResult(
-            suspected_files=[
-                "src/services/data_service.py",
-                "src/utils/math_helpers.py",
-            ],
-            root_cause="Several deliberate Demo bugs cause test failures",
-            evidence=[
-                Evidence(
-                    file_path="src/utils/math_helpers.py",
-                    line_start=40,
-                    line_end=43,
-                    excerpt="resut = 1",
-                    reason="NameError due to typo: resut should be result",
-                ),
-                Evidence(
-                    file_path="src/services/data_service.py",
-                    line_start=23,
-                    line_end=23,
-                    excerpt="max_retries: int = \"three\"",
-                    reason="Config declares an int but defaults to a string",
-                ),
-                Evidence(
-                    file_path="src/services/data_service.py",
-                    line_start=44,
-                    line_end=44,
-                    excerpt="zip(values, weight)",
-                    reason="Undefined weight variable causes NameError",
-                ),
-            ],
-            confidence=0.85,
-            missing_information=[],
-        )
+        mock_investigator.return_value = build_demo_diagnosis()
         from codemedic.schemas.patch import PatchProposal
         from tests.test_real_sandbox_e2e import FIX_FILES, FIX_PATCH
         mock_fixer.return_value = PatchProposal(
@@ -325,34 +295,9 @@ class TestWorkflowGraph:
             FIX_PATCH,
         )
 
-        mock_investigator.return_value = DiagnosisResult(
-            suspected_files=FIX_FILES,
-            root_cause="Several deliberate Demo bugs cause test failures",
-            evidence=[
-                Evidence(
-                    file_path="src/utils/math_helpers.py",
-                    line_start=40,
-                    line_end=43,
-                    excerpt="resut = 1",
-                    reason="Variable typo breaks factorial",
-                ),
-                Evidence(
-                    file_path="src/services/data_service.py",
-                    line_start=23,
-                    line_end=23,
-                    excerpt="max_retries: int = \"three\"",
-                    reason="Config default violates its annotation",
-                ),
-                Evidence(
-                    file_path="src/services/data_service.py",
-                    line_start=44,
-                    line_end=44,
-                    excerpt="zip(values, weight)",
-                    reason="Undefined weight variable causes NameError",
-                ),
-            ],
+        mock_investigator.return_value = build_demo_diagnosis(
             confidence=0.9,
-            missing_information=[],
+            suspected_files=FIX_FILES,
         )
         mock_fixer.side_effect = [
             PatchProposal(
@@ -446,6 +391,103 @@ class TestWorkflowGraph:
         assert result["retrieval_round"] >= 1
         assert result["investigation_steps"] >= 1
         assert result["final_status"] is not None
+
+    @patch("codemedic.agents.fixer.run_fixer")
+    @patch("codemedic.graph.nodes.run_investigator")
+    def test_diagnosis_review_override_authorizes_demo_files(
+        self,
+        mock_investigator,
+        mock_fixer,
+        initial_state: RepairState,
+    ) -> None:
+        from langgraph.checkpoint.memory import MemorySaver
+        from langgraph.types import Command
+
+        from codemedic.graph.builder import compile_workflow
+        from codemedic.schemas.patch import PatchProposal
+        from tests.test_real_sandbox_e2e import FIX_FILES, FIX_PATCH
+
+        mock_investigator.return_value = DiagnosisResult(
+            suspected_files=[],
+            root_cause="Needs human authorization",
+            evidence=[],
+            confidence=0.3,
+            missing_information=["Need review"],
+        )
+        mock_fixer.return_value = PatchProposal(
+            modified_files=FIX_FILES,
+            unified_diff=FIX_PATCH,
+            rationale="Fix all Demo failures",
+            risks=[],
+            test_suggestions=[],
+        )
+
+        initial_state["thread_id"] = "test_diagnosis_override"
+        agent = compile_workflow(checkpointer=MemorySaver())
+        config = {"configurable": {"thread_id": "test_diagnosis_override"}}
+
+        first = agent.invoke(initial_state, config)
+        assert first["__interrupt__"][0].value["review_type"] == "diagnosis"
+        assert "approved_files" in first["__interrupt__"][0].value
+
+        second = agent.invoke(
+            Command(
+                resume={
+                    "decision": "accept_diagnosis",
+                    "approved_files": FIX_FILES,
+                }
+            ),
+            config,
+        )
+
+        assert second["approved_files"] == sorted(FIX_FILES)
+        assert second["allowed_files"] == sorted(FIX_FILES)
+        assert second["__interrupt__"][0].value["review_type"] == "patch"
+
+        completed = agent.invoke(Command(resume={"decision": "approved"}), config)
+
+        assert completed["final_status"] == "通过"
+
+    @patch("codemedic.agents.fixer.run_fixer")
+    @patch("codemedic.graph.nodes.run_investigator")
+    def test_invalid_diagnosis_review_override_never_calls_fixer(
+        self,
+        mock_investigator,
+        mock_fixer,
+        initial_state: RepairState,
+    ) -> None:
+        from langgraph.checkpoint.memory import MemorySaver
+        from langgraph.types import Command
+
+        from codemedic.graph.builder import compile_workflow
+
+        mock_investigator.return_value = DiagnosisResult(
+            suspected_files=[],
+            root_cause="Needs human authorization",
+            evidence=[],
+            confidence=0.3,
+            missing_information=["Need review"],
+        )
+
+        initial_state["thread_id"] = "test_invalid_diagnosis_override"
+        agent = compile_workflow(checkpointer=MemorySaver())
+        config = {"configurable": {"thread_id": "test_invalid_diagnosis_override"}}
+
+        first = agent.invoke(initial_state, config)
+        assert first["__interrupt__"][0].value["review_type"] == "diagnosis"
+
+        rejected = agent.invoke(
+            Command(
+                resume={
+                    "decision": "accept_diagnosis",
+                    "approved_files": ["../outside.py"],
+                }
+            ),
+            config,
+        )
+
+        assert rejected["final_status"] == "拒绝"
+        mock_fixer.assert_not_called()
 
 
 # ── Smoke test with real LLM ─────────────────────────────────────────────────

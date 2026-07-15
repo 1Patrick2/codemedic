@@ -13,12 +13,15 @@ import re
 from pathlib import Path
 
 from codemedic.config import settings
+from codemedic.tools.context import _is_rooted_path
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 
 def _resolve_safe_path(repo_root: Path, requested: str) -> Path | None:
     """Resolve a file path within the repo, rejecting traversal attempts."""
+    if not isinstance(requested, str) or _is_rooted_path(requested):
+        return None
     target = (repo_root / requested).resolve()
     try:
         target.relative_to(repo_root.resolve())

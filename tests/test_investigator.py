@@ -239,11 +239,19 @@ class TestRepositoryContext:
 
 
 class TestToolSecurity:
-    def test_tools_do_not_expose_repository_path(self) -> None:
+    def test_tools_do_not_expose_repository_path(self, monkeypatch) -> None:
         """Tool decorators must NOT expose repository_path as a parameter."""
 
         from codemedic.agents.investigator import build_investigator
 
+        monkeypatch.setattr(
+            "codemedic.agents.investigator.ChatOpenAI",
+            lambda **_: object(),
+        )
+        monkeypatch.setattr(
+            "codemedic.agents.investigator.create_react_agent",
+            lambda *_args, **_kwargs: object(),
+        )
         agent = build_investigator(str(DEMO_REPO))
         assert agent is not None
 

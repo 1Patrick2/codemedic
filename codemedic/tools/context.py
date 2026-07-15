@@ -3,7 +3,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
+
+
+def _is_rooted_path(value: str) -> bool:
+    """Return whether a path is absolute or rooted on either major platform."""
+    windows_path = PureWindowsPath(value)
+    return (
+        Path(value).is_absolute()
+        or windows_path.is_absolute()
+        or bool(windows_path.root)
+        or bool(windows_path.drive)
+    )
 
 
 @dataclass(frozen=True)
@@ -35,6 +46,8 @@ class RepositoryContext:
 
         Returns None if the path escapes the repository root.
         """
+        if not isinstance(relative, str) or _is_rooted_path(relative):
+            return None
         target_raw = (self.root / relative)
         # Check symlink escape BEFORE resolving
         try:

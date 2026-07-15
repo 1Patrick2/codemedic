@@ -24,14 +24,18 @@ You will receive:
 - The original issue description
 - The Investigator's diagnosis (root cause, evidence, suspected files)
 - Retrieved repository context (relevant file contents)
+- Retry feedback when an earlier patch was rejected or its tests failed
 
 Rules:
 1. Generate a complete Unified Diff that fixes ALL identified bugs.
 2. Only modify files listed in the diagnosis.
 3. Do NOT add new features, refactor unrelated code, or change formatting.
-4. Explain the rationale for each change.
-5. List any risks.
-6. Do NOT write files or execute commands — only produce the diff text.
+4. When retry feedback is present, produce a new patch that addresses it and
+   do not repeat the previous patch unchanged unless the feedback proves it
+   was already correct.
+5. Explain the rationale for each change.
+6. List any risks.
+7. Do NOT write files or execute commands — only produce the diff text.
 
 Use standard Unified Diff format:
 --- a/file.py
@@ -49,6 +53,22 @@ TEST_SUGGESTIONS: test1 | test2
 """
 
 
+_SUMMARY_LABELS = (
+    "MODIFIED_FILES",
+    "RATIONALE",
+    "RISKS",
+    "TEST_SUGGESTIONS",
+)
+
+
+def _extract_summary_section(text: str, label: str) -> str:
+    """Extract one summary field without consuming later labeled fields."""
+    labels = "|".join(re.escape(item) for item in _SUMMARY_LABELS)
+    pattern = rf"(?ms)^{re.escape(label)}:\s*(.*?)(?=^(?:{labels}):|\Z)"
+    match = re.search(pattern, text)
+    return match.group(1).strip() if match else ""
+
+
 def _parse_fixer_response(text: str) -> PatchProposal:
     """Parse the model's text response into a PatchProposal."""
     diff_parts = []
@@ -62,18 +82,14 @@ def _parse_fixer_response(text: str) -> PatchProposal:
             diff_parts.append(line)
     unified_diff = "\n".join(diff_parts)
 
-    files_match = re.search(r"MODIFIED_FILES:\s*(.+)", text)
-    rationale_match = re.search(r"RATIONALE:\s*(.+)", text, re.DOTALL)
-    risks_match = re.search(r"RISKS:\s*(.+)", text, re.DOTALL)
-    tests_match = re.search(r"TEST_SUGGESTIONS:\s*(.+)", text, re.DOTALL)
-
     modified_files = [
-        f.strip() for f in (files_match.group(1).split(",") if files_match else [])
+        f.strip() for f in _extract_summary_section(text, "MODIFIED_FILES").split(",")
+        if f.strip()
     ]
-    rationale = rationale_match.group(1).strip() if rationale_match else ""
-    risks_str = risks_match.group(1) if risks_match else ""
+    rationale = _extract_summary_section(text, "RATIONALE")
+    risks_str = _extract_summary_section(text, "RISKS")
     risks = [r.strip() for r in risks_str.split("|") if r.strip()]
-    tests_str = tests_match.group(1) if tests_match else ""
+    tests_str = _extract_summary_section(text, "TEST_SUGGESTIONS")
     test_suggestions = [t.strip() for t in tests_str.split("|") if t.strip()]
 
     return PatchProposal(
@@ -100,6 +116,11 @@ def run_fixer(
     issue: str,
     diagnosis: DiagnosisResult,
     context: str,
+    *,
+    previous_patch: dict[str, object] | None = None,
+    failure_feedback: str | None = None,
+    human_feedback: str | None = None,
+    verifier_summary: str | None = None,
 ) -> PatchProposal:
     """Run the Fixer agent to produce a patch proposal.
 
@@ -107,11 +128,22 @@ def run_fixer(
         issue: Original issue description.
         diagnosis: Structured diagnosis from the Investigator.
         context: Retrieved repository context (file contents).
+        previous_patch: The previous PatchProposal serialized for retry.
+        failure_feedback: Test or validation failures from the previous attempt.
+        human_feedback: Optional reviewer feedback for the retry.
+        verifier_summary: Advisory summary from the previous verification.
 
     Returns:
         A PatchProposal with Unified Diff and rationale.
     """
     llm = build_fixer()
+
+    retry_context = _format_retry_context(
+        previous_patch=previous_patch,
+        failure_feedback=failure_feedback,
+        human_feedback=human_feedback,
+        verifier_summary=verifier_summary,
+    )
 
     user_message = f"""Issue: {issue}
 
@@ -124,6 +156,9 @@ Diagnosis:
 
 Repository context:
 {context[:6000]}
+
+Retry context:
+{retry_context}
 
 Generate a Unified Diff patch that fixes all identified bugs."""
 
@@ -139,6 +174,32 @@ Generate a Unified Diff patch that fixes all identified bugs."""
     else:
         result = _parse_fixer_response(str(content))
     return result
+
+
+def _format_retry_context(
+    *,
+    previous_patch: dict[str, object] | None,
+    failure_feedback: str | None,
+    human_feedback: str | None,
+    verifier_summary: str | None,
+) -> str:
+    """Format prior attempt data so retries can respond to concrete feedback."""
+    if not any((previous_patch, failure_feedback, human_feedback, verifier_summary)):
+        return "(first attempt; no retry feedback)"
+
+    sections: list[str] = []
+    if previous_patch:
+        sections.append(
+            "Previous patch:\n"
+            + str(previous_patch.get("unified_diff", "(no diff recorded)"))
+        )
+    if failure_feedback:
+        sections.append(f"Test/validation feedback:\n{failure_feedback}")
+    if human_feedback:
+        sections.append(f"Human feedback:\n{human_feedback}")
+    if verifier_summary:
+        sections.append(f"Verifier summary:\n{verifier_summary}")
+    return "\n\n".join(sections)
 
 
 def _format_evidence(diagnosis: DiagnosisResult) -> str:

@@ -1,0 +1,78 @@
+"""Repository context — validated root directory for tool access."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path, PureWindowsPath
+
+
+def _is_rooted_path(value: str) -> bool:
+    """Return whether a path is absolute or rooted on either major platform."""
+    windows_path = PureWindowsPath(value)
+    return (
+        Path(value).is_absolute()
+        or windows_path.is_absolute()
+        or bool(windows_path.root)
+        or bool(windows_path.drive)
+    )
+
+
+@dataclass(frozen=True)
+class RepositoryContext:
+    """Validated repository root that all tools are bound to.
+
+    Tools receive this context at construction time, not as a parameter
+    from the model, preventing path traversal attacks.
+    """
+
+    root: Path
+
+    def __init__(self, root: str | Path) -> None:
+        """Create a validated repository context.
+
+        Args:
+            root: Path to the repository root directory (str or Path).
+
+        Raises:
+            NotADirectoryError: If the root does not exist or is not a directory.
+        """
+        resolved = Path(root).resolve(strict=False)
+        if not resolved.is_dir():
+            raise NotADirectoryError(f"Repository root not found: {root}")
+        object.__setattr__(self, "root", resolved)
+
+    def resolve_path(self, relative: str) -> Path | None:
+        """Resolve a relative path within the repository.
+
+        Returns None if the path escapes the repository root.
+        """
+        if not isinstance(relative, str) or _is_rooted_path(relative):
+            return None
+        target_raw = (self.root / relative)
+        # Check symlink escape BEFORE resolving
+        try:
+            is_symlink = target_raw.is_symlink()
+        except OSError:
+            return None
+        if is_symlink:
+            real = target_raw.resolve(strict=False)
+            try:
+                real.relative_to(self.root)
+            except ValueError:
+                return None
+
+        target = target_raw.resolve()
+        try:
+            target.relative_to(self.root)
+        except ValueError:
+            return None
+
+        return target
+
+    def is_within(self, path: Path) -> bool:
+        """Check if a resolved path is within the repository root."""
+        try:
+            path.relative_to(self.root)
+            return True
+        except ValueError:
+            return False

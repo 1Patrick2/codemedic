@@ -51,21 +51,7 @@ def run_verifier(
         base_url=settings.openai_api_base or None,
     )
 
-    # Format test results
-    lines = []
-    for r in test_results:
-        lines.append(f"Command: {r['command']}")
-        lines.append(f"Return code: {r['returncode']}")
-        lines.append(f"Timed out: {r.get('timed_out', False)}")
-        stdout = r.get("stdout", "")[:500]
-        if stdout:
-            lines.append(f"stdout:\n{stdout}")
-        stderr = r.get("stderr", "")[:500]
-        if stderr:
-            lines.append(f"stderr:\n{stderr}")
-        lines.append("---")
-
-    test_report = "\n".join(lines)
+    test_report = _format_test_results(test_results)
 
     user_message = f"""Issue: {issue}
 
@@ -84,3 +70,24 @@ Analyze these results and provide a summary."""
 
     response = llm.invoke(messages)
     return response.content if isinstance(response.content, str) else str(response.content)
+
+
+def _format_test_results(test_results: list[dict]) -> str:
+    """Format serialized TestResult objects for the Verifier prompt."""
+    lines = []
+    for r in test_results:
+        command_id = r.get("command_id", "unknown")
+        argv = r.get("argv", [])
+        command = " ".join(str(arg) for arg in argv)
+        lines.append(f"Command: {command_id} ({command})")
+        lines.append(f"Return code: {r['returncode']}")
+        lines.append(f"Timed out: {r.get('timed_out', False)}")
+        stdout = r.get("stdout", "")[:500]
+        if stdout:
+            lines.append(f"stdout:\n{stdout}")
+        stderr = r.get("stderr", "")[:500]
+        if stderr:
+            lines.append(f"stderr:\n{stderr}")
+        lines.append("---")
+
+    return "\n".join(lines)

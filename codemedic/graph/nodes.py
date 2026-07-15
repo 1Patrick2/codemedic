@@ -17,6 +17,13 @@ from codemedic.tools.repository import list_repo_tree, read_file
 from codemedic.tracing.local_trace import LocalTracer
 
 
+def _trajectory_recorder(state: RepairState):
+    """Return the active run recorder, if this node is inside WorkflowRuntime."""
+    from codemedic.tracing.recorder import get_recorder
+
+    return get_recorder(state.get("run_id"), state.get("thread_id"))
+
+
 def intake(state: RepairState) -> dict[str, Any]:
     """Validate and pre-process inputs.
 
@@ -146,6 +153,19 @@ def investigator_node(state: RepairState) -> dict[str, Any]:
     from codemedic.tools.context import RepositoryContext
     from codemedic.validation.evidence import validate_evidence
 
+    recorder = _trajectory_recorder(state)
+    if recorder:
+        recorder.record(
+            node="investigator_agent",
+            event_type="model_request",
+            summary="Investigator model request",
+            input_data={
+                "issue": state["issue"],
+                "error_log": state.get("error_log"),
+                "retrieved_context": state.get("retrieved_context", []),
+            },
+        )
+
     tracer = LocalTracer(task_id=state["task_id"])
 
     diagnosis = run_investigator(
@@ -172,6 +192,20 @@ def investigator_node(state: RepairState) -> dict[str, Any]:
 
     # Populate allowed_files from validated evidence
     allowed_files = sorted({ev.file_path for ev in validation_result.validated_evidence})
+
+    if recorder:
+        recorder.record(
+            node="investigator_agent",
+            event_type="model_response",
+            summary="Investigator diagnosis received",
+            output_data={"diagnosis": diagnosis.model_dump()},
+        )
+        recorder.record(
+            node="evidence_validation",
+            event_type="validation",
+            summary="Evidence validation completed",
+            output_data=validation_result.model_dump(),
+        )
 
     return {
         "diagnosis": diagnosis,
@@ -213,6 +247,21 @@ def fixer_node(state: RepairState) -> dict[str, Any]:
             context_parts.append(f"\n--- {ctx_path} ---\n{ctx_content}")
 
     context_str = "\n".join(context_parts)
+    recorder = _trajectory_recorder(state)
+    if recorder:
+        recorder.record(
+            node="fixer_agent",
+            event_type="model_request",
+            summary="Fixer model request",
+            input_data={
+                "issue": state["issue"],
+                "diagnosis": diagnosis.model_dump(),
+                "context": context_str,
+                "previous_patch": state.get("previous_patch"),
+                "failure_feedback": state.get("failure_feedback"),
+                "human_feedback": state.get("human_feedback"),
+            },
+        )
 
     try:
         patch = run_fixer(
@@ -225,12 +274,31 @@ def fixer_node(state: RepairState) -> dict[str, Any]:
             verifier_summary=state.get("verifier_summary"),
         )
 
+        if recorder:
+            recorder.record(
+                node="fixer_agent",
+                event_type="model_response",
+                summary="Fixer patch proposal received",
+                output_data={"patch": patch.model_dump()},
+            )
+            recorder.write_artifact(
+                f"patch_{fix_attempt_count}.diff",
+                patch.unified_diff,
+            )
+
         return {
             "patch": patch.model_dump(),
             "fix_attempt_count": fix_attempt_count,
             "workflow_status": "running",
         }
     except Exception as exc:
+        if recorder:
+            recorder.record(
+                node="fixer_agent",
+                event_type="model_response",
+                summary="Fixer model failed",
+                output_data={"error": str(exc)},
+            )
         return {
             "patch": None,
             "fix_attempt_count": fix_attempt_count,
@@ -296,6 +364,15 @@ def diagnosis_review_node(state: RepairState) -> dict[str, Any]:
             "default": [],
         },
     }
+
+    recorder = _trajectory_recorder(state)
+    if recorder:
+        recorder.record(
+            node="diagnosis_review",
+            event_type="interrupt",
+            summary="Diagnosis Review requested",
+            output_data=interrupt_value,
+        )
 
     human_input = interrupt(interrupt_value)
 
@@ -384,6 +461,15 @@ def patch_review_node(state: RepairState) -> dict[str, Any]:
         "options": options,
     }
 
+    recorder = _trajectory_recorder(state)
+    if recorder:
+        recorder.record(
+            node="patch_review",
+            event_type="interrupt",
+            summary="Patch Review requested",
+            output_data=interrupt_value,
+        )
+
     human_input = interrupt(interrupt_value)
 
     if isinstance(human_input, dict):
@@ -453,6 +539,15 @@ def patch_validation_node(state: RepairState) -> dict[str, Any]:
 
     result = DiffValidationResult.model_validate(raw_result)
 
+    recorder = _trajectory_recorder(state)
+    if recorder:
+        recorder.record(
+            node="patch_validation",
+            event_type="validation",
+            summary="Diff validation completed",
+            output_data=result.model_dump(),
+        )
+
     return {"diff_validation": result.model_dump()}
 
 
@@ -491,6 +586,10 @@ def final_report_node(state: RepairState) -> dict[str, Any]:
 
     final_status = derive_final_status(state)
 
+    recorder = _trajectory_recorder(state)
+    if recorder:
+        recorder.write_json_artifact("report.json", report | {"final_status": final_status})
+
     workflow_status = "failed" if any(
         error.startswith("Repository path not found:")
         for error in state.get("errors", [])
@@ -508,6 +607,17 @@ def final_report_node(state: RepairState) -> dict[str, Any]:
         ),
         "sandbox_cleaned": state.get("sandbox_cleaned", False),
     }
+
+
+def _record_patch_apply(state: RepairState, result: Any) -> None:
+    recorder = _trajectory_recorder(state)
+    if recorder:
+        recorder.record(
+            node="apply_patch",
+            event_type="patch_apply",
+            summary="Patch application completed",
+            output_data=result.model_dump(),
+        )
 
 
 def apply_patch_node(state: RepairState) -> dict[str, Any]:
@@ -534,6 +644,7 @@ def apply_patch_node(state: RepairState) -> dict[str, Any]:
             stderr="No patch to apply",
             modified_files=[], sandbox_path=None,
         )
+        _record_patch_apply(state, result)
         return {
             "patch_apply_result": result.model_dump(),
             "sandbox_path": None,
@@ -547,6 +658,7 @@ def apply_patch_node(state: RepairState) -> dict[str, Any]:
             stderr="Patch has no diff content",
             modified_files=[], sandbox_path=None,
         )
+        _record_patch_apply(state, result)
         return {
             "patch_apply_result": result.model_dump(),
             "sandbox_path": None,
@@ -562,6 +674,7 @@ def apply_patch_node(state: RepairState) -> dict[str, Any]:
             stderr=f"Patch violates boundaries: {boundary_check['violations']}",
             modified_files=[], sandbox_path=None,
         )
+        _record_patch_apply(state, result)
         return {
             "patch_apply_result": result.model_dump(),
             "sandbox_path": None,
@@ -582,6 +695,7 @@ def apply_patch_node(state: RepairState) -> dict[str, Any]:
                 modified_files=raw.get("modified_files", []),
                 sandbox_path=None,
             )
+            _record_patch_apply(state, result)
             return {
                 "patch_apply_result": result.model_dump(),
                 "sandbox_path": None,
@@ -597,6 +711,7 @@ def apply_patch_node(state: RepairState) -> dict[str, Any]:
             sandbox_path=sandbox_path,
         )
 
+        _record_patch_apply(state, result)
         return {
             "patch_apply_result": result.model_dump(),
             "sandbox_path": result.sandbox_path,
@@ -610,6 +725,7 @@ def apply_patch_node(state: RepairState) -> dict[str, Any]:
             stderr=str(exc),
             modified_files=[], sandbox_path=None,
         )
+        _record_patch_apply(state, result)
         return {
             "patch_apply_result": result.model_dump(),
             "sandbox_path": None,
@@ -632,6 +748,15 @@ def run_tests_node(state: RepairState) -> dict[str, Any]:
             command_id="init", argv=["error"],
             returncode=-1, stderr="No sandbox path for tests",
         )
+        recorder = _trajectory_recorder(state)
+        if recorder:
+            recorder.record(
+                node="run_tests",
+                event_type="test_result",
+                summary="Tests could not start",
+                output_data={"results": [err_result.model_dump()]},
+            )
+            recorder.write_json_artifact("tests.json", [err_result.model_dump()])
         return {
             "test_results": [err_result.model_dump()],
             "sandbox_path": None,
@@ -640,8 +765,18 @@ def run_tests_node(state: RepairState) -> dict[str, Any]:
 
     try:
         results = run_tests(str(sandbox_path))
+        serialized = [r.model_dump() for r in results]
+        recorder = _trajectory_recorder(state)
+        if recorder:
+            recorder.record(
+                node="run_tests",
+                event_type="test_result",
+                summary="Tests completed",
+                output_data={"results": serialized},
+            )
+            recorder.write_json_artifact("tests.json", serialized)
         return {
-            "test_results": [r.model_dump() for r in results],
+            "test_results": serialized,
             "sandbox_path": None,
             "sandbox_cleaned": True,
         }
@@ -651,6 +786,15 @@ def run_tests_node(state: RepairState) -> dict[str, Any]:
             command_id="error", argv=["error"],
             returncode=-1, stderr=f"Test execution error: {exc}",
         )
+        recorder = _trajectory_recorder(state)
+        if recorder:
+            recorder.record(
+                node="run_tests",
+                event_type="test_result",
+                summary="Test execution failed",
+                output_data={"results": [err_result.model_dump()]},
+            )
+            recorder.write_json_artifact("tests.json", [err_result.model_dump()])
         return {
             "test_results": [err_result.model_dump()],
             "sandbox_path": None,
@@ -683,9 +827,36 @@ def verifier_node(state: RepairState) -> dict[str, Any]:
         else:
             patch_summary = str(patch)[:200]
 
+    recorder = _trajectory_recorder(state)
+    if recorder:
+        recorder.record(
+            node="verifier_agent",
+            event_type="model_request",
+            summary="Verifier model request",
+            input_data={
+                "issue": issue,
+                "patch_summary": patch_summary,
+                "test_results": test_results,
+            },
+        )
+
     try:
         summary = run_verifier(issue, patch_summary, test_results)
+        if recorder:
+            recorder.record(
+                node="verifier_agent",
+                event_type="model_response",
+                summary="Verifier summary received",
+                output_data={"summary": summary},
+            )
         return {"verifier_summary": summary}
     except Exception as exc:
+        if recorder:
+            recorder.record(
+                node="verifier_agent",
+                event_type="model_response",
+                summary="Verifier model failed",
+                output_data={"error": str(exc)},
+            )
         return {"verifier_summary": f"Verifier error: {exc}"}
 

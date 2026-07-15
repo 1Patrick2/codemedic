@@ -5,6 +5,10 @@ B3+B4: Split diagnosis_review and patch_review, add patch validation gate.
 
 from __future__ import annotations
 
+import time
+from functools import wraps
+from typing import Any
+
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 
@@ -37,26 +41,74 @@ from codemedic.graph.state import RepairState
 from codemedic.schemas.results import WorkflowRunResult
 
 
+def _instrument_node(
+    name: str,
+    node: Any,
+) -> Any:
+    """Record node input/output when a public runtime has an active recorder."""
+    from codemedic.tracing.recorder import get_recorder
+
+    @wraps(node)
+    def wrapped(state: RepairState) -> dict[str, Any]:
+        recorder = get_recorder(state.get("run_id"), state.get("thread_id"))
+        if recorder is None:
+            return node(state)
+
+        started = time.perf_counter()
+        recorder.record(
+            node=name,
+            event_type="node_started",
+            summary=f"{name} started",
+            input_data=dict(state),
+        )
+        try:
+            output = node(state)
+        except BaseException as exc:
+            recorder.record(
+                node=name,
+                event_type="node_completed",
+                summary=f"{name} failed",
+                output_data={"error": str(exc)},
+                duration_ms=(time.perf_counter() - started) * 1000,
+            )
+            raise
+
+        recorder.record(
+            node=name,
+            event_type="node_completed",
+            summary=f"{name} completed",
+            output_data=output,
+            duration_ms=(time.perf_counter() - started) * 1000,
+        )
+        return output
+
+    return wrapped
+
+
 def build_workflow() -> StateGraph:
     """Build and return the repair workflow graph."""
     graph = StateGraph(RepairState)
 
     # ── Register nodes ──────────────────────────────────────────────
-    graph.add_node("intake", intake)
-    graph.add_node("mark_diagnosis_review_waiting", mark_diagnosis_review_waiting)
-    graph.add_node("mark_patch_review_waiting", mark_patch_review_waiting)
-    graph.add_node("hybrid_retrieve", hybrid_retrieve)
-    graph.add_node("investigator_agent", investigator_node)
-    graph.add_node("evidence_gate", lambda s: {})  # router-only node
-    graph.add_node("diagnosis_review", diagnosis_review_node)
-    graph.add_node("fixer_agent", fixer_node)
-    graph.add_node("patch_validation", patch_validation_node)
-    graph.add_node("patch_review", patch_review_node)
-    graph.add_node("prepare_fix_retry", prepare_fix_retry)
-    graph.add_node("apply_patch", apply_patch_node)
-    graph.add_node("run_tests", run_tests_node)
-    graph.add_node("verifier_agent", verifier_node)
-    graph.add_node("final_report", final_report_node)
+    nodes: dict[str, Any] = {
+        "intake": intake,
+        "mark_diagnosis_review_waiting": mark_diagnosis_review_waiting,
+        "mark_patch_review_waiting": mark_patch_review_waiting,
+        "hybrid_retrieve": hybrid_retrieve,
+        "investigator_agent": investigator_node,
+        "evidence_gate": lambda _state: {},
+        "diagnosis_review": diagnosis_review_node,
+        "fixer_agent": fixer_node,
+        "patch_validation": patch_validation_node,
+        "patch_review": patch_review_node,
+        "prepare_fix_retry": prepare_fix_retry,
+        "apply_patch": apply_patch_node,
+        "run_tests": run_tests_node,
+        "verifier_agent": verifier_node,
+        "final_report": final_report_node,
+    }
+    for name, node in nodes.items():
+        graph.add_node(name, _instrument_node(name, node))
 
     # ── Edges ───────────────────────────────────────────────────────
     graph.set_entry_point("intake")

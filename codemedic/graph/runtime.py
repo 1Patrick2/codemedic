@@ -13,6 +13,12 @@ from langgraph.types import Command
 
 from codemedic.graph.state import create_initial_state
 from codemedic.schemas.results import WorkflowRunResult
+from codemedic.tracing.events import EventType
+from codemedic.tracing.recorder import (
+    TrajectoryRecorder,
+    register_recorder,
+    unregister_recorder,
+)
 
 
 class WorkflowRuntime:
@@ -57,14 +63,31 @@ class WorkflowRuntime:
         """Invoke a new workflow and return its structured snapshot."""
         self._ensure_open()
         tid = thread_id or str(uuid.uuid4())
+        run_id = f"run_{uuid.uuid4().hex}"
         initial = create_initial_state(
             issue=issue,
             repository_path=repository_path,
             error_log=error_log,
+            run_id=run_id,
             thread_id=tid,
         )
-        result = self._graph.invoke(initial, self._config(tid))
-        return self._make_result(result, tid)
+        recorder = TrajectoryRecorder(run_id, tid)
+        register_recorder(recorder)
+        try:
+            result = self._graph.invoke(initial, self._config(tid))
+            return self._record_invocation_result(recorder, result, tid)
+        except Exception as exc:
+            recorder.record(
+                node="workflow",
+                event_type="workflow_failed",
+                summary="Workflow run failed",
+                output_data={"error": str(exc)},
+            )
+            recorder.finish("failed")
+            raise
+        finally:
+            unregister_recorder(run_id, tid)
+            recorder.close()
 
     def resume(
         self,
@@ -83,12 +106,71 @@ class WorkflowRuntime:
             if not getattr(snapshot, "next", ()):
                 raise ValueError(f"No resumable checkpoint for thread_id: {thread_id}")
 
+        state = snapshot.values if get_state is not None else {}
+        run_id = str(state.get("run_id") or f"run_{thread_id}")
+        recorder = TrajectoryRecorder(run_id, thread_id)
+        register_recorder(recorder)
+        recorder.record(
+            node="workflow",
+            event_type="resume",
+            summary="Workflow resumed from human decision",
+            input_data={
+                "decision": decision,
+                "reason": reason,
+                "approved_files": approved_files or [],
+            },
+        )
         resume_value: dict[str, Any] = {"decision": decision, "reason": reason}
         if approved_files is not None:
             resume_value["approved_files"] = approved_files
         command: Command = Command(resume=resume_value)
-        result = self._graph.invoke(command, config)
-        return self._make_result(result, thread_id)
+        try:
+            result = self._graph.invoke(command, config)
+            return self._record_invocation_result(recorder, result, thread_id)
+        except Exception as exc:
+            recorder.record(
+                node="workflow",
+                event_type="workflow_failed",
+                summary="Workflow resume failed",
+                output_data={"error": str(exc)},
+            )
+            recorder.finish("failed")
+            raise
+        finally:
+            unregister_recorder(run_id, thread_id)
+            recorder.close()
+
+    @staticmethod
+    def _record_invocation_result(
+        recorder: TrajectoryRecorder,
+        state: dict[str, Any],
+        thread_id: str,
+    ) -> WorkflowRunResult:
+        workflow_result = WorkflowRuntime._make_result(state, thread_id)
+        if workflow_result.interrupted:
+            recorder.record(
+                node="workflow",
+                event_type="interrupt",
+                summary="Workflow paused for human review",
+                output_data={"workflow_status": workflow_result.workflow_status},
+            )
+        else:
+            event_type: EventType = (
+                "workflow_failed"
+                if workflow_result.workflow_status == "failed"
+                else "workflow_completed"
+            )
+            recorder.record(
+                node="workflow",
+                event_type=event_type,
+                summary=f"Workflow {workflow_result.workflow_status}",
+                output_data={
+                    "workflow_status": workflow_result.workflow_status,
+                    "final_status": state.get("final_status"),
+                },
+            )
+        recorder.finish(workflow_result.workflow_status)
+        return workflow_result
 
     @staticmethod
     def _config(thread_id: str) -> dict[str, dict[str, str]]:

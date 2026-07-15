@@ -33,6 +33,7 @@ htmlcov/
 runtime/checkpoints/
 runtime/traces/
 runtime/sandboxes/
+runtime/runs/
 
 # OS
 Thumbs.db

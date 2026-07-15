@@ -12,6 +12,7 @@ class RepairState(TypedDict):
 
     # ── Intake ──────────────────────────────────────────────────────
     task_id: str
+    run_id: str
     thread_id: str
     workflow_status: str | None
     issue: str
@@ -87,6 +88,7 @@ def create_initial_state(
     error_log: str | None = None,
     *,
     task_id: str | None = None,
+    run_id: str | None = None,
     thread_id: str | None = None,
 ) -> RepairState:
     """Create a fresh RepairState with defaults."""
@@ -94,6 +96,7 @@ def create_initial_state(
 
     return RepairState(
         task_id=task_id or f"task_{uuid.uuid4().hex[:12]}",
+        run_id=run_id or f"run_{uuid.uuid4().hex[:12]}",
         thread_id=thread_id or "",
         workflow_status="running",
         issue=issue,

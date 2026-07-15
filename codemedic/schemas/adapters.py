@@ -7,6 +7,7 @@ These adapters provide typed reads and writes via Pydantic model_validate/model_
 from __future__ import annotations
 
 from codemedic.graph.state import RepairState
+from codemedic.schemas.diagnosis import DiagnosisResult
 from codemedic.schemas.results import (
     DiffValidationResult,
     EvidenceValidationResult,
@@ -15,6 +16,11 @@ from codemedic.schemas.results import (
 )
 
 # ── Writes ────────────────────────────────────────────────────────────────────
+
+
+def set_diagnosis(state: RepairState, result: DiagnosisResult) -> dict:
+    """Prepare state update dict with serialized DiagnosisResult."""
+    return {"diagnosis": result.model_dump()}
 
 
 def set_evidence_validation(
@@ -40,6 +46,14 @@ def set_test_results(state: RepairState, results: list[TestResult]) -> dict:
 
 
 # ── Reads ─────────────────────────────────────────────────────────────────────
+
+
+def get_diagnosis(state: RepairState) -> DiagnosisResult | None:
+    """Read and validate diagnosis from serialized workflow state."""
+    raw = state.get("diagnosis")
+    if raw is None:
+        return None
+    return DiagnosisResult.model_validate(raw)
 
 
 def get_evidence_validation(

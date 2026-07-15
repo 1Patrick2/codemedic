@@ -25,6 +25,7 @@ from codemedic.graph.routers import (
     patch_review_router,
 )
 from codemedic.graph.state import RepairState, create_initial_state
+from codemedic.schemas.adapters import get_diagnosis
 from codemedic.schemas.diagnosis import DiagnosisResult
 from tests.factories import build_demo_diagnosis
 
@@ -285,7 +286,7 @@ class TestWorkflowGraph:
         assert result["final_status"] == "通过"
         assert result["final_report"] is not None
         assert result["diagnosis"] is not None
-        assert result["diagnosis"].confidence == 0.85
+        assert get_diagnosis(result).confidence == 0.85
         assert result["thread_id"] == "test_e2e"
         assert result["patch_apply_result"]["success"] is True
         assert result["patch_apply_result"]["modified_files"] == FIX_FILES

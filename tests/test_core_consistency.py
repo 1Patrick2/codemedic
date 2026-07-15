@@ -21,6 +21,7 @@ from codemedic.graph.nodes import (
     diagnosis_review_node,
     fixer_node,
     intake,
+    investigator_node,
     patch_review_node,
     patch_validation_node,
     prepare_fix_retry,
@@ -42,6 +43,23 @@ from codemedic.schemas.diagnosis import DiagnosisResult
 from codemedic.schemas.results import PatchApplyResult, TestResult
 
 DEMO_REPO = str(Path(__file__).resolve().parent.parent / "demo_repos" / "sample_project")
+
+
+def test_investigator_node_serializes_diagnosis_for_checkpoint() -> None:
+    state = create_initial_state("issue", DEMO_REPO)
+    diagnosis = DiagnosisResult(
+        suspected_files=["src/utils/math_helpers.py"],
+        root_cause="The function uses an undefined variable.",
+        evidence=[],
+        confidence=0.5,
+        missing_information=[],
+    )
+
+    with patch("codemedic.graph.nodes.run_investigator", return_value=diagnosis):
+        result = investigator_node(state)
+
+    assert isinstance(result["diagnosis"], dict)
+    assert DiagnosisResult.model_validate(result["diagnosis"]) == diagnosis
 
 
 def test_patch_apply_result_rejects_inconsistent_success() -> None:

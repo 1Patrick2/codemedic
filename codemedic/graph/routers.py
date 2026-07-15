@@ -11,6 +11,7 @@ from typing import Literal
 from codemedic.config import settings
 from codemedic.graph.state import RepairState
 from codemedic.schemas.adapters import (
+    get_diagnosis,
     get_diff_validation,
     get_evidence_validation,
     get_patch_apply_result,
@@ -40,7 +41,7 @@ def evidence_gate_router(state: RepairState) -> RouteLabel:
 
     All values are taken directly from state — no LLM calls.
     """
-    diagnosis = state.get("diagnosis")
+    diagnosis = get_diagnosis(state)
     if diagnosis is None:
         return INSUFFICIENT
 

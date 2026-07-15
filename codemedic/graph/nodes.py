@@ -228,7 +228,7 @@ def investigator_node(state: RepairState) -> dict[str, Any]:
         )
 
     return {
-        "diagnosis": diagnosis,
+        "diagnosis": diagnosis.model_dump(),
         "evidence_validation": validation_result.model_dump(),
         "allowed_files": allowed_files,
         "investigation_steps": state.get("investigation_steps", 0) + 1,
@@ -248,7 +248,9 @@ def fixer_node(state: RepairState) -> dict[str, Any]:
         Patch proposal and incremented fix_attempt_count.
     """
     fix_attempt_count = state.get("fix_attempt_count", 0) + 1
-    diagnosis = state.get("diagnosis")
+    from codemedic.schemas.adapters import get_diagnosis
+
+    diagnosis = get_diagnosis(state)
     if diagnosis is None:
         return {
             "patch": None,
@@ -376,10 +378,11 @@ def diagnosis_review_node(state: RepairState) -> dict[str, Any]:
     """
     from langgraph.types import interrupt
 
+    from codemedic.schemas.adapters import get_diagnosis
     from codemedic.tools.context import RepositoryContext
     from codemedic.validation.evidence import validate_approved_files
 
-    diag = state.get("diagnosis")
+    diag = get_diagnosis(state)
 
     interrupt_value = {
         "review_type": "diagnosis",
@@ -477,7 +480,9 @@ def patch_review_node(state: RepairState) -> dict[str, Any]:
         human_decision and review_reason.
     """
     patch = state.get("patch")
-    diag = state.get("diagnosis")
+    from codemedic.schemas.adapters import get_diagnosis
+
+    diag = get_diagnosis(state)
 
     retry_count = state.get("retry_count", 0)
     max_retries = settings.max_fixer_retries
@@ -597,9 +602,9 @@ def final_report_node(state: RepairState) -> dict[str, Any]:
         final_report dict and final_status.
     """
     from codemedic.graph.status import derive_final_status
-    from codemedic.schemas.adapters import get_patch_apply_result
+    from codemedic.schemas.adapters import get_diagnosis, get_patch_apply_result
 
-    diag = state.get("diagnosis")
+    diag = get_diagnosis(state)
     from codemedic.schemas.adapters import get_test_results
 
     test_results = get_test_results(state)

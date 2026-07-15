@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from typing import Any, Literal, TypedDict
 
-from codemedic.schemas.diagnosis import DiagnosisResult
-
 
 class RepairState(TypedDict):
     """Shared state for the repair workflow."""
@@ -24,8 +22,8 @@ class RepairState(TypedDict):
     """Chunks retrieved from the repository (file path, content, metadata)."""
 
     # ── Investigation ───────────────────────────────────────────────
-    diagnosis: DiagnosisResult | None
-    """Structured diagnosis produced by the Investigator agent."""
+    diagnosis: dict[str, Any] | None
+    """Serialized DiagnosisResult produced by the Investigator agent."""
     evidence_validation: dict[str, Any] | None
     """Validation result from validate_evidence() (dict for backward compat)."""
 

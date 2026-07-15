@@ -249,7 +249,7 @@ class TestToolSecurity:
             lambda **_: object(),
         )
         monkeypatch.setattr(
-            "codemedic.agents.investigator.create_react_agent",
+            "codemedic.agents.investigator.create_agent",
             lambda *_args, **_kwargs: object(),
         )
         agent = build_investigator(str(DEMO_REPO))
@@ -257,6 +257,26 @@ class TestToolSecurity:
 
         # Re-inspect — tools are closures that capture ctx
         assert True  # Builder accepts repo_path, tools don't expose it
+
+    def test_builder_uses_current_create_agent_contract(self, monkeypatch) -> None:
+        from codemedic.agents import investigator
+
+        calls = {}
+        monkeypatch.setattr(investigator, "ChatOpenAI", lambda **_: object())
+
+        def fake_create_agent(*args, **kwargs):
+            calls["args"] = args
+            calls["kwargs"] = kwargs
+            return object()
+
+        monkeypatch.setattr(investigator, "create_agent", fake_create_agent)
+
+        agent = investigator.build_investigator(str(DEMO_REPO))
+
+        assert agent is not None
+        assert calls["kwargs"]["name"] == "investigator"
+        assert calls["kwargs"]["system_prompt"].startswith("You are an Investigator")
+        assert len(calls["kwargs"]["tools"]) == 4
 
     def test_tool_cannot_change_repository_root(self) -> None:
         """The model-facing tools should not accept a repository_path argument."""

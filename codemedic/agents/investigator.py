@@ -13,9 +13,9 @@ import time
 from pathlib import Path
 from typing import Any
 
+from langchain.agents import create_agent
 from langchain.tools import tool
 from langchain_openai import ChatOpenAI
-from langgraph.prebuilt import create_react_agent
 from pydantic import SecretStr
 
 from codemedic.config import settings
@@ -238,10 +238,10 @@ def build_investigator(repository_root: str | Path) -> Any:
         base_url=settings.openai_api_base or None,
     )
 
-    agent = create_react_agent(
+    agent = create_agent(
         llm,
         tools=[list_repo_tree, search_code, read_file, parse_log],
-        prompt=INVESTIGATOR_PROMPT.format(max_steps=settings.max_investigation_steps),
+        system_prompt=INVESTIGATOR_PROMPT.format(max_steps=settings.max_investigation_steps),
         name="investigator",
     )
     return agent

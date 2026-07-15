@@ -34,7 +34,7 @@ Investigator → Fixer → Human Review → Sandbox → Verifier 闭环，覆盖
 
 ## 当前状态
 
-核心 Graph 路由、Checkpoint 恢复、失败反馈重试、Patch/Sandbox/Test 数据契约和确定性 E2E 已完成；真实 LLM Smoke Test 与 Provider 原生 Structured Output 仍未纳入本阶段。
+核心 Graph 路由、跨实例 Checkpoint 恢复、失败反馈重试、Patch/Sandbox/Test 数据契约和确定性 E2E 已通过本地自动化验证；CI 运行记录与最终合并门槛仍待完成。真实 LLM Smoke Test 与 Provider 原生 Structured Output 尚未纳入本阶段。
 
 | 阶段 | 内容 | 状态 |
 |------|------|------|
@@ -44,6 +44,17 @@ Investigator → Fixer → Human Review → Sandbox → Verifier 闭环，覆盖
 | Stage 3 | Fixer + Human Review (Interrupt) | ✅ Interrupt / Resume / Retry 反馈已接通 |
 | Stage 4 | Sandbox + Test Runner + Verifier | ✅ 真实 Patch、测试和最终状态判定已验证 |
 | Phase A | 安全加固 | ✅ 完成 |
+| Phase C | Deterministic Closure | ⚠️ C1-C6 已本地验证，C7 CI/合并门槛待完成 |
+
+## 测试分层
+
+- Unit Tests：State、Router、Node 和工具函数。
+- Schema Contract Tests：Evidence、Diff、Patch Apply、Test 和 Workflow Result。
+- Security Tests：路径、Evidence、Diff 边界和授权文件校验。
+- Graph Integration Tests：正常修复、Retry、Diagnosis Override 和 Fail-Closed。
+- Real Sandbox E2E：真实 Unified Diff、Sandbox Apply、测试执行和原仓库 Hash 校验。
+- SQLite Checkpoint E2E：Runtime 关闭后重新打开同一数据库并恢复 Workflow。
+- Real LLM Smoke Tests：当前仅保留为非 CI 的后续验证项。
 
 > 当前项目适合作为工程演示和技术面试的原型展示，不适合直接用于生产环境或不可信的第三方代码。
 
@@ -100,7 +111,8 @@ codemedic/
 │   │   ├── state.py         # RepairState TypedDict
 │   │   ├── nodes.py         # 各节点函数
 │   │   ├── routers.py       # 纯函数条件路由
-│   │   └── builder.py       # 工作流构建与编译
+│   │   ├── builder.py       # 工作流构建与公开运行入口
+│   │   └── runtime.py       # SQLite Checkpoint 生命周期与跨实例 Resume
 │   ├── tools/
 │   │   ├── context.py       # RepositoryContext（安全边界）
 │   │   ├── repository.py    # 4 只读工具（路径安全、二进制检测、大小限制）

@@ -10,7 +10,6 @@ from pathlib import Path
 
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, StateGraph
-from langgraph.types import Command
 
 from codemedic.graph.nodes import (
     apply_patch_node,
@@ -188,25 +187,16 @@ def run_workflow(
     Returns:
         WorkflowRunResult with thread_id, status, and state snapshot.
     """
-    import uuid
-
-    from codemedic.graph.state import create_initial_state
+    from codemedic.graph.runtime import WorkflowRuntime
 
     # Generate thread_id BEFORE creating state or config — ensures consistency
-    tid = thread_id or str(uuid.uuid4())
-
-    agent = compile_workflow()
-    initial = create_initial_state(
-        issue=issue,
-        repository_path=repository_path,
-        error_log=error_log,
-        thread_id=tid,
-    )
-    config = {"configurable": {"thread_id": tid}}
-
-    result = agent.invoke(initial, config)
-
-    return _make_workflow_result(result, tid)
+    with WorkflowRuntime() as runtime:
+        return runtime.run(
+            issue,
+            repository_path,
+            error_log,
+            thread_id=thread_id,
+        )
 
 
 def resume_workflow(
@@ -225,13 +215,10 @@ def resume_workflow(
     Returns:
         WorkflowRunResult with thread_id, status, and state snapshot.
     """
-    agent = compile_workflow()
-    config = {"configurable": {"thread_id": thread_id}}
+    from codemedic.graph.runtime import WorkflowRuntime
 
-    command: Command = Command(resume={"decision": decision, "reason": reason})
-    result = agent.invoke(command, config)
-
-    return _make_workflow_result(result, thread_id)
+    with WorkflowRuntime() as runtime:
+        return runtime.resume(decision, thread_id=thread_id, reason=reason)
 
 
 def _make_workflow_result(state: dict, tid: str) -> "WorkflowRunResult":

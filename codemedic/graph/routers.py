@@ -44,9 +44,9 @@ def evidence_gate_router(state: RepairState) -> RouteLabel:
     if diagnosis is None:
         return INSUFFICIENT
 
-    # Evidence validation failed → route to manual review
+    # Missing or failed validation must route to manual review.
     validation = get_evidence_validation(state)
-    if validation is not None and not validation.valid:
+    if validation is None or not validation.valid:
         return UNCERTAIN
 
     # Very low confidence — insufficient evidence

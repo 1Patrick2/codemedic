@@ -335,6 +335,12 @@ def diagnosis_review_node(state: RepairState) -> dict[str, Any]:
             )
         else:
             allowed_files = sorted(set(allowed_files).union(approved_files))
+            if not allowed_files:
+                decision = "reject"
+                errors.append(
+                    "No authorized files after Diagnosis Review; "
+                    "Fixer access denied"
+                )
 
     return {
         "human_decision": decision,

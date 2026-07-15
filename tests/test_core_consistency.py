@@ -17,6 +17,7 @@ from codemedic.graph.builder import (
     run_workflow,
 )
 from codemedic.graph.nodes import (
+    apply_patch_node,
     diagnosis_review_node,
     fixer_node,
     intake,
@@ -61,6 +62,39 @@ def test_patch_apply_router_validates_state_result() -> None:
 
     with pytest.raises(ValidationError):
         patch_apply_router(state)
+
+
+def test_patch_apply_failure_routes_to_final_report_without_tests() -> None:
+    from tests.test_real_sandbox_e2e import FIX_FILES, FIX_PATCH
+
+    state = create_initial_state("issue", DEMO_REPO)
+    state["allowed_files"] = FIX_FILES
+    state["patch"] = {
+        "modified_files": FIX_FILES,
+        "unified_diff": FIX_PATCH,
+    }
+
+    with (
+        patch("codemedic.tools.sandbox.create_temp_copy", return_value="sandbox"),
+        patch(
+            "codemedic.tools.sandbox.apply_patch",
+            return_value={
+                "success": False,
+                "returncode": 1,
+                "stdout": "",
+                "stderr": "git apply failed",
+                "modified_files": [],
+            },
+        ),
+        patch("codemedic.tools.sandbox.cleanup_sandbox") as cleanup,
+    ):
+        result = apply_patch_node(state)
+
+    assert result["patch_apply_result"]["success"] is False
+    assert result["sandbox_path"] is None
+    assert result["sandbox_cleaned"] is True
+    assert patch_apply_router({**state, **result}) == "failed"
+    cleanup.assert_called_once_with("sandbox")
 
 
 def test_patch_validation_missing_result_fails_closed() -> None:
@@ -243,6 +277,21 @@ def test_diagnosis_review_rejects_invalid_approved_files_without_partial_merge()
     assert result["approved_files"] == []
     assert result["allowed_files"] == ["src/utils/math_helpers.py"]
     assert diagnosis_review_router({**state, **result}) == "reject"
+
+
+def test_diagnosis_review_rejects_empty_authorization_without_allowed_files() -> None:
+    state = create_initial_state("issue", DEMO_REPO)
+
+    with patch(
+        "langgraph.types.interrupt",
+        return_value={"decision": "accept_diagnosis", "approved_files": []},
+    ):
+        result = diagnosis_review_node(state)
+
+    assert result["human_decision"] == "reject"
+    assert result["approved_files"] == []
+    assert result["allowed_files"] == []
+    assert any("no authorized files" in error.lower() for error in result["errors"])
 
 
 def test_review_nodes_normalize_unknown_decisions() -> None:

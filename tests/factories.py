@@ -2,30 +2,49 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from codemedic.schemas.diagnosis import DiagnosisResult, Evidence
+
+DEMO_REPO = Path(__file__).resolve().parent.parent / "demo_repos" / "sample_project"
+
+
+def find_line_number(path: Path, text: str) -> int:
+    """Find the current source line containing text in the Demo repository."""
+    for index, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        if text in line:
+            return index
+    raise AssertionError(f"Text not found in {path}: {text}")
 
 
 def build_demo_evidence() -> list[Evidence]:
     """Return Evidence matching the current Demo source lines."""
+    math_path = DEMO_REPO / "src/utils/math_helpers.py"
+    data_path = DEMO_REPO / "src/services/data_service.py"
+    factorial_start = find_line_number(math_path, "resut = 1")
+    factorial_end = find_line_number(math_path, "return result")
+    retries_line = find_line_number(data_path, "max_retries: int")
+    weighted_line = find_line_number(data_path, "zip(values, weight)")
+
     return [
         Evidence(
             file_path="src/utils/math_helpers.py",
-            line_start=40,
-            line_end=43,
+            line_start=factorial_start,
+            line_end=factorial_end,
             excerpt="resut = 1",
             reason="Variable typo breaks factorial",
         ),
         Evidence(
             file_path="src/services/data_service.py",
-            line_start=23,
-            line_end=23,
+            line_start=retries_line,
+            line_end=retries_line,
             excerpt='max_retries: int = "three"',
             reason="Config default violates its annotation",
         ),
         Evidence(
             file_path="src/services/data_service.py",
-            line_start=44,
-            line_end=44,
+            line_start=weighted_line,
+            line_end=weighted_line,
             excerpt="zip(values, weight)",
             reason="Undefined weight variable causes NameError",
         ),

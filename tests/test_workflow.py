@@ -25,7 +25,7 @@ from codemedic.graph.routers import (
     patch_review_router,
 )
 from codemedic.graph.state import RepairState, create_initial_state
-from codemedic.schemas.diagnosis import DiagnosisResult, Evidence
+from codemedic.schemas.diagnosis import DiagnosisResult
 from tests.factories import build_demo_diagnosis
 
 DEMO_REPO = str(Path(__file__).resolve().parent.parent / "demo_repos" / "sample_project")
@@ -44,20 +44,10 @@ def initial_state() -> RepairState:
 
 @pytest.fixture
 def diagnosis_high_conf() -> DiagnosisResult:
-    return DiagnosisResult(
-        suspected_files=["src/utils/math_helpers.py"],
-        root_cause="Variable name typo in factorial()",
-        evidence=[
-            Evidence(
-                file_path="src/utils/math_helpers.py",
-                line_start=40,
-                line_end=40,
-                excerpt="resut = 1",
-                reason="NameError due to typo",
-            )
-        ],
+    return build_demo_diagnosis(
         confidence=0.85,
-        missing_information=[],
+        evidence=build_demo_diagnosis().evidence[:1],
+        suspected_files=["src/utils/math_helpers.py"],
     )
 
 
@@ -139,6 +129,11 @@ class TestEvidenceGate:
     ) -> None:
         state = dict(initial_state)
         state["diagnosis"] = diagnosis_high_conf
+        state["evidence_validation"] = {
+            "valid": True,
+            "errors": [],
+            "validated_evidence": [],
+        }
         route = evidence_gate_router(state)  # type: ignore[arg-type]
         assert route == SUFFICIENT
 
@@ -147,6 +142,11 @@ class TestEvidenceGate:
     ) -> None:
         state = dict(initial_state)
         state["diagnosis"] = diagnosis_low_conf
+        state["evidence_validation"] = {
+            "valid": True,
+            "errors": [],
+            "validated_evidence": [],
+        }
         route = evidence_gate_router(state)  # type: ignore[arg-type]
         assert route == INSUFFICIENT
 
@@ -156,9 +156,22 @@ class TestEvidenceGate:
         state = dict(initial_state)
         state["diagnosis"] = diagnosis_low_conf
         state["retrieval_round"] = 2
+        state["evidence_validation"] = {
+            "valid": True,
+            "errors": [],
+            "validated_evidence": [],
+        }
         route = evidence_gate_router(state)  # type: ignore[arg-type]
         # Low confidence + no evidence + out of rounds → uncertain
         assert route == UNCERTAIN
+
+    def test_missing_evidence_validation_routes_to_uncertain(
+        self, initial_state: RepairState, diagnosis_high_conf: DiagnosisResult
+    ) -> None:
+        state = dict(initial_state)
+        state["diagnosis"] = diagnosis_high_conf
+
+        assert evidence_gate_router(state) == UNCERTAIN
 
 
 # ── Fixer stub tests ─────────────────────────────────────────────────────────
@@ -343,6 +356,93 @@ class TestWorkflowGraph:
 
     @patch("codemedic.graph.nodes.run_investigator")
     @patch("codemedic.agents.fixer.run_fixer")
+    def test_invalid_diff_is_fail_closed_after_retry_budget(
+        self,
+        mock_fixer,
+        mock_investigator,
+        initial_state: RepairState,
+    ) -> None:
+        """An invalid Diff exhausts retry and cannot report a successful repair."""
+        from langgraph.checkpoint.memory import MemorySaver
+
+        from codemedic.graph.builder import compile_workflow
+        from codemedic.schemas.patch import PatchProposal
+
+        mock_investigator.return_value = build_demo_diagnosis()
+        mock_fixer.return_value = PatchProposal(
+            modified_files=["src/utils/math_helpers.py"],
+            unified_diff="not a unified diff",
+            rationale="Invalid patch for fail-closed coverage",
+            risks=[],
+            test_suggestions=[],
+        )
+
+        initial_state["thread_id"] = "test_invalid_diff_fail_closed"
+        agent = compile_workflow(checkpointer=MemorySaver())
+        config = {"configurable": {"thread_id": "test_invalid_diff_fail_closed"}}
+
+        result = agent.invoke(initial_state, config)
+
+        assert result["final_status"] == "人工复核"
+        assert result["final_status"] != "通过"
+        assert result["test_results"] == []
+        assert result["retry_count"] == 1
+        assert result["fix_attempt_count"] == 2
+        assert mock_fixer.call_count == 2
+
+    @patch("codemedic.graph.nodes.run_investigator")
+    @patch("codemedic.agents.fixer.run_fixer")
+    def test_patch_apply_failure_skips_tests_and_cannot_pass(
+        self,
+        mock_fixer,
+        mock_investigator,
+        initial_state: RepairState,
+    ) -> None:
+        """A failed Apply routes directly to Final Report without running tests."""
+        from langgraph.checkpoint.memory import MemorySaver
+        from langgraph.types import Command
+
+        from codemedic.graph.builder import compile_workflow
+        from codemedic.schemas.patch import PatchProposal
+        from codemedic.schemas.results import PatchApplyResult
+        from tests.test_real_sandbox_e2e import FIX_FILES, FIX_PATCH
+
+        mock_investigator.return_value = build_demo_diagnosis()
+        mock_fixer.return_value = PatchProposal(
+            modified_files=FIX_FILES,
+            unified_diff=FIX_PATCH,
+            rationale="Valid patch before simulated Apply failure",
+            risks=[],
+            test_suggestions=[],
+        )
+        failed_apply = PatchApplyResult(
+            success=False,
+            returncode=1,
+            stderr="simulated git apply failure",
+        ).model_dump()
+
+        initial_state["thread_id"] = "test_apply_failure_fail_closed"
+        with (
+            patch("codemedic.graph.builder.apply_patch_node", return_value={
+                "patch_apply_result": failed_apply,
+                "sandbox_path": None,
+                "sandbox_cleaned": True,
+            }),
+            patch("codemedic.graph.builder.run_tests_node") as run_tests,
+        ):
+            agent = compile_workflow(checkpointer=MemorySaver())
+            config = {"configurable": {"thread_id": "test_apply_failure_fail_closed"}}
+            first = agent.invoke(initial_state, config)
+            assert first["__interrupt__"][0].value["review_type"] == "patch"
+
+            completed = agent.invoke(Command(resume={"decision": "approved"}), config)
+
+        assert completed["final_status"] == "人工复核"
+        assert completed["final_status"] != "通过"
+        run_tests.assert_not_called()
+
+    @patch("codemedic.graph.nodes.run_investigator")
+    @patch("codemedic.agents.fixer.run_fixer")
     def test_workflow_does_retrieval_loop(
         self, mock_fixer, mock_investigator, initial_state: RepairState
     ) -> None:
@@ -483,6 +583,42 @@ class TestWorkflowGraph:
                     "approved_files": ["../outside.py"],
                 }
             ),
+            config,
+        )
+
+        assert rejected["final_status"] == "拒绝"
+        mock_fixer.assert_not_called()
+
+    @patch("codemedic.agents.fixer.run_fixer")
+    @patch("codemedic.graph.nodes.run_investigator")
+    def test_empty_diagnosis_review_override_never_calls_fixer(
+        self,
+        mock_investigator,
+        mock_fixer,
+        initial_state: RepairState,
+    ) -> None:
+        from langgraph.checkpoint.memory import MemorySaver
+        from langgraph.types import Command
+
+        from codemedic.graph.builder import compile_workflow
+
+        mock_investigator.return_value = DiagnosisResult(
+            suspected_files=[],
+            root_cause="Needs human authorization",
+            evidence=[],
+            confidence=0.3,
+            missing_information=["Need review"],
+        )
+
+        initial_state["thread_id"] = "test_empty_diagnosis_override"
+        agent = compile_workflow(checkpointer=MemorySaver())
+        config = {"configurable": {"thread_id": "test_empty_diagnosis_override"}}
+
+        first = agent.invoke(initial_state, config)
+        assert first["__interrupt__"][0].value["review_type"] == "diagnosis"
+
+        rejected = agent.invoke(
+            Command(resume={"decision": "accept_diagnosis", "approved_files": []}),
             config,
         )
 

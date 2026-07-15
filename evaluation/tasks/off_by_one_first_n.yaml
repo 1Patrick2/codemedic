@@ -1,0 +1,16 @@
+task_id: off_by_one_first_n
+repository_path: demo_repos/real_model_tasks/off_by_one_first_n
+issue: first_n() returns one item too few when n is positive.
+error_log: "AssertionError: expected 3 items, received 2"
+allowed_files:
+  - src/slicing.py
+expected_files:
+  - src/slicing.py
+forbidden_files:
+  - tests/test_slicing.py
+  - README.md
+setup_commands: []
+test_commands:
+  - [python, -m, pytest, -q]
+expected_root_cause_terms: [n - 1, off-by-one, slice]
+max_retries: 1

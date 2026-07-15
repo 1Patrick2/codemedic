@@ -1,0 +1,16 @@
+task_id: wrong_variable_weighted_sum
+repository_path: demo_repos/real_model_tasks/wrong_variable_weighted_sum
+issue: weighted_sum() raises NameError when combining values and weights.
+error_log: "NameError: name 'weight' is not defined"
+allowed_files:
+  - src/weights.py
+expected_files:
+  - src/weights.py
+forbidden_files:
+  - tests/test_weights.py
+  - README.md
+setup_commands: []
+test_commands:
+  - [python, -m, pytest, -q]
+expected_root_cause_terms: [weight, weights, zip]
+max_retries: 1

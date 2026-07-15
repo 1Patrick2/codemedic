@@ -1,0 +1,16 @@
+task_id: type_mismatch_retry_policy
+repository_path: demo_repos/real_model_tasks/type_mismatch_retry_policy
+issue: RetryPolicy.should_retry() fails because max_retries is not an integer.
+error_log: "TypeError: '<' not supported between instances of 'int' and 'str'"
+allowed_files:
+  - src/retry_policy.py
+expected_files:
+  - src/retry_policy.py
+forbidden_files:
+  - tests/test_retry_policy.py
+  - README.md
+setup_commands: []
+test_commands:
+  - [python, -m, pytest, -q]
+expected_root_cause_terms: [max_retries, int, three]
+max_retries: 1

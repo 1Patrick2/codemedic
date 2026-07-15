@@ -267,6 +267,28 @@ def resume_workflow(
         )
 
 
+def get_run_state(thread_id: str) -> WorkflowRunResult:
+    """Return the latest persisted workflow state for a thread."""
+    from codemedic.graph.runtime import WorkflowRuntime
+
+    with WorkflowRuntime() as runtime:
+        return runtime.get_state(thread_id)
+
+
+def list_runs(root_dir: str | None = None) -> list[str]:
+    """List locally persisted trajectory run IDs."""
+    from codemedic.tracing.reader import TrajectoryReader
+
+    return TrajectoryReader(root_dir).list_runs()
+
+
+def get_trajectory(run_id: str, root_dir: str | None = None) -> dict[str, Any]:
+    """Read one locally persisted trajectory without invoking the workflow."""
+    from codemedic.tracing.reader import TrajectoryReader
+
+    return TrajectoryReader(root_dir).read_trajectory(run_id)
+
+
 def _make_workflow_result(state: dict, tid: str) -> "WorkflowRunResult":
     """Build a WorkflowRunResult from workflow state dict and thread_id."""
     interrupted = "__interrupt__" in state

@@ -140,6 +140,15 @@ class WorkflowRuntime:
             unregister_recorder(run_id, thread_id)
             recorder.close()
 
+    def get_state(self, thread_id: str) -> WorkflowRunResult:
+        """Read the latest state for a thread without changing the workflow."""
+        self._ensure_open()
+        snapshot = self._graph.get_state(self._config(thread_id))
+        state = dict(snapshot.values)
+        if not state:
+            raise ValueError(f"No workflow state for thread_id: {thread_id}")
+        return self._make_result(state, thread_id)
+
     @staticmethod
     def _record_invocation_result(
         recorder: TrajectoryRecorder,

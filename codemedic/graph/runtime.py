@@ -72,6 +72,7 @@ class WorkflowRuntime:
         *,
         thread_id: str,
         reason: str = "",
+        approved_files: list[str] | None = None,
     ) -> WorkflowRunResult:
         """Resume a thread only when its latest checkpoint is interruptible."""
         self._ensure_open()
@@ -82,7 +83,10 @@ class WorkflowRuntime:
             if not getattr(snapshot, "next", ()):
                 raise ValueError(f"No resumable checkpoint for thread_id: {thread_id}")
 
-        command: Command = Command(resume={"decision": decision, "reason": reason})
+        resume_value: dict[str, Any] = {"decision": decision, "reason": reason}
+        if approved_files is not None:
+            resume_value["approved_files"] = approved_files
+        command: Command = Command(resume=resume_value)
         result = self._graph.invoke(command, config)
         return self._make_result(result, thread_id)
 

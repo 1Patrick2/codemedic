@@ -21,16 +21,23 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install dependencies
+      - name: Show test environment
         run: |
-          pip install -e ".[dev]"
-          pip check
+          python --version
+          git rev-parse HEAD
+          python -m pip freeze
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Check dependencies
+        run: python -m pip check
 
       - name: Lint with ruff
-        run: ruff check .
+        run: python -m ruff check .
 
       - name: Type check with mypy
-        run: mypy codemedic
+        run: python -m mypy codemedic
 
       - name: Test with pytest
-        run: pytest -q
+        run: python -m pytest -q

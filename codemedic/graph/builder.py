@@ -5,10 +5,7 @@ B3+B4: Split diagnosis_review and patch_review, add patch validation gate.
 
 from __future__ import annotations
 
-import sqlite3
-from pathlib import Path
-
-from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 
 from codemedic.graph.nodes import (
@@ -38,15 +35,6 @@ from codemedic.graph.routers import (
 )
 from codemedic.graph.state import RepairState
 from codemedic.schemas.results import WorkflowRunResult
-
-
-def _get_checkpointer():
-    """Create a SQLite checkpointer in the runtime directory."""
-    runtime_dir = Path.cwd() / "runtime" / "checkpoints"
-    runtime_dir.mkdir(parents=True, exist_ok=True)
-    db_path = runtime_dir / "codemedic.db"
-    conn = sqlite3.connect(str(db_path), detect_types=sqlite3.PARSE_DECLTYPES)
-    return SqliteSaver(conn)
 
 
 def build_workflow() -> StateGraph:
@@ -162,7 +150,7 @@ def build_workflow() -> StateGraph:
 def compile_workflow(*, checkpointer=None):
     """Build and compile the workflow graph."""
     graph = build_workflow()
-    cptr = checkpointer or _get_checkpointer()
+    cptr = checkpointer or MemorySaver()
     return graph.compile(checkpointer=cptr)
 
 
@@ -204,6 +192,7 @@ def resume_workflow(
     reason: str = "",
     *,
     thread_id: str,
+    approved_files: list[str] | None = None,
 ) -> "WorkflowRunResult":
     """Resume a paused workflow with a human review decision.
 
@@ -218,7 +207,12 @@ def resume_workflow(
     from codemedic.graph.runtime import WorkflowRuntime
 
     with WorkflowRuntime() as runtime:
-        return runtime.resume(decision, thread_id=thread_id, reason=reason)
+        return runtime.resume(
+            decision,
+            thread_id=thread_id,
+            reason=reason,
+            approved_files=approved_files,
+        )
 
 
 def _make_workflow_result(state: dict, tid: str) -> "WorkflowRunResult":

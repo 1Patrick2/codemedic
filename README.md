@@ -34,7 +34,7 @@ Investigator → Fixer → Human Review → Sandbox → Verifier 闭环，覆盖
 
 ## 当前状态
 
-核心 Graph 路由、跨实例 Checkpoint 恢复、失败反馈重试、Patch/Sandbox/Test 数据契约和确定性 E2E 已通过本地自动化验证；CI 运行记录与最终合并门槛仍待完成。真实 LLM Smoke Test 与 Provider 原生 Structured Output 尚未纳入本阶段。
+核心 Graph 路由、跨实例 Checkpoint 恢复、失败反馈重试、公开人工授权 API、Patch/Sandbox/Test 数据契约和确定性 E2E 已通过本地自动化验证；CI 运行记录与最终 PR 门槛仍待完成。真实 LLM Smoke Test 与 Provider 原生 Structured Output 尚未纳入本阶段。
 
 | 阶段 | 内容 | 状态 |
 |------|------|------|
@@ -44,7 +44,7 @@ Investigator → Fixer → Human Review → Sandbox → Verifier 闭环，覆盖
 | Stage 3 | Fixer + Human Review (Interrupt) | ✅ Interrupt / Resume / Retry 反馈已接通 |
 | Stage 4 | Sandbox + Test Runner + Verifier | ✅ 真实 Patch、测试和最终状态判定已验证 |
 | Phase A | 安全加固 | ✅ 完成 |
-| Phase C | Deterministic Closure | ⚠️ C1-C6 已本地验证，C7 CI/合并门槛待完成 |
+| Phase C | Deterministic Closure | ⚠️ C1-C7 已本地验证，CI/PR 门槛待完成 |
 
 ## 测试分层
 
@@ -90,7 +90,18 @@ while result.interrupted:
         if result.workflow_status == 'waiting_diagnosis_review'
         else 'approved'
     )
-    result = resume_workflow(decision, thread_id=result.thread_id)
+    result = resume_workflow(
+        decision,
+        thread_id=result.thread_id,
+        approved_files=(
+            [
+                'src/utils/math_helpers.py',
+                'src/services/data_service.py',
+            ]
+            if decision == 'accept_diagnosis'
+            else None
+        ),
+    )
 print(result.state.get('final_status'))
 "
 

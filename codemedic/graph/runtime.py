@@ -144,10 +144,12 @@ class WorkflowRuntime:
         """Read the latest state for a thread without changing the workflow."""
         self._ensure_open()
         snapshot = self._graph.get_state(self._config(thread_id))
-        state = dict(snapshot.values)
+        state = dict(snapshot.values) if isinstance(snapshot.values, dict) else {}
         if not state:
             raise ValueError(f"No workflow state for thread_id: {thread_id}")
-        return self._make_result(state, thread_id)
+        from codemedic.graph import builder
+
+        return builder._make_workflow_result_from_snapshot(snapshot, thread_id)
 
     @staticmethod
     def _record_invocation_result(

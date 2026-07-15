@@ -2,7 +2,19 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
+
+from pydantic import BaseModel
+
+
+def _as_mapping(value: object) -> dict[str, Any]:
+    """Convert state values to a display-safe mapping."""
+    if isinstance(value, BaseModel):
+        return value.model_dump(mode="json")
+    if isinstance(value, Mapping):
+        return dict(value)
+    return {}
 
 
 def _streamlit() -> Any:
@@ -29,18 +41,30 @@ def _show_state(st: Any, result: Any) -> None:
     )
 
     if state.get("diagnosis"):
-        diagnosis = state["diagnosis"]
+        diagnosis = _as_mapping(state["diagnosis"])
         st.subheader("Diagnosis")
         st.write(
             {
                 "root_cause": diagnosis.get("root_cause"),
                 "confidence": diagnosis.get("confidence"),
                 "suspected_files": diagnosis.get("suspected_files", []),
+                "missing_information": diagnosis.get("missing_information", []),
+            }
+        )
+        st.write(
+            {
+                "evidence": [
+                    _as_mapping(item) for item in diagnosis.get("evidence", [])
+                ],
+                "evidence_validation": _as_mapping(state.get("evidence_validation")),
+                "allowed_files": state.get("allowed_files", []),
+                "approved_files": state.get("approved_files", []),
             }
         )
     if state.get("patch"):
         st.subheader("Patch Review")
-        st.code(state["patch"].get("unified_diff", ""), language="diff")
+        patch = _as_mapping(state["patch"])
+        st.code(patch.get("unified_diff", ""), language="diff")
     if state.get("test_results"):
         st.subheader("Tests")
         st.json(state["test_results"])
@@ -65,8 +89,10 @@ def _show_review(st: Any, result: Any) -> None:
         )
         approved_files = [line.strip() for line in approved_text.splitlines() if line.strip()]
     else:
+        from codemedic.config import settings
+
         options = ["approved", "rejected"]
-        if state.get("retry_count", 0) < 1:
+        if state.get("retry_count", 0) < settings.max_fixer_retries:
             options.append("retry")
         decision = st.selectbox("Decision", options)
         approved_files = None

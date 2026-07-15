@@ -6,10 +6,12 @@ B3+B4: Split diagnosis_review and patch_review, add patch validation gate.
 from __future__ import annotations
 
 import time
+from collections.abc import Mapping
 from functools import wraps
 from typing import Any
 
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.errors import GraphInterrupt
 from langgraph.graph import END, StateGraph
 
 from codemedic.graph.nodes import (
@@ -63,7 +65,16 @@ def _instrument_node(
         )
         try:
             output = node(state)
-        except BaseException as exc:
+        except GraphInterrupt as exc:
+            recorder.record(
+                node=name,
+                event_type="interrupt",
+                summary=f"{name} interrupted",
+                output_data={"error": str(exc)},
+                duration_ms=(time.perf_counter() - started) * 1000,
+            )
+            raise
+        except Exception as exc:
             recorder.record(
                 node=name,
                 event_type="node_completed",
@@ -289,41 +300,101 @@ def get_trajectory(run_id: str, root_dir: str | None = None) -> dict[str, Any]:
     return TrajectoryReader(root_dir).read_trajectory(run_id)
 
 
-def _make_workflow_result(state: dict, tid: str) -> "WorkflowRunResult":
+def _make_workflow_result(
+    state: dict,
+    tid: str,
+    *,
+    workflow_status: str | None = None,
+) -> "WorkflowRunResult":
     """Build a WorkflowRunResult from workflow state dict and thread_id."""
-    interrupted = "__interrupt__" in state
+    interrupted = workflow_status in {
+        "waiting_diagnosis_review",
+        "waiting_patch_review",
+    } if workflow_status is not None else "__interrupt__" in state
 
     # Determine workflow status from state
-    if interrupted:
+    if workflow_status is not None:
+        resolved_status = workflow_status
+    elif interrupted:
         interrupt_payload = state["__interrupt__"]
         if interrupt_payload and len(interrupt_payload) > 0:
-            review_type = interrupt_payload[0].value.get("review_type", "unknown")
+            review_type = _interrupt_review_type(interrupt_payload[0])
             if review_type == "diagnosis":
-                workflow_status = "waiting_diagnosis_review"
+                resolved_status = "waiting_diagnosis_review"
             elif review_type == "patch":
-                workflow_status = "waiting_patch_review"
+                resolved_status = "waiting_patch_review"
             else:
-                workflow_status = "failed"
+                resolved_status = "failed"
         else:
-            workflow_status = "failed"
+            resolved_status = "failed"
     else:
         # Check if there was a fatal error
         final_status = state.get("final_status")
         if state.get("workflow_status") == "failed":
-            workflow_status = "failed"
+            resolved_status = "failed"
         elif final_status is not None:
-            workflow_status = "completed"
+            resolved_status = "completed"
         else:
-            workflow_status = "failed"
+            resolved_status = "failed"
 
     snapshot = dict(state)
     snapshot["thread_id"] = tid
-    snapshot["workflow_status"] = workflow_status
+    snapshot["workflow_status"] = resolved_status
 
     return WorkflowRunResult(
         task_id=state.get("task_id", "unknown"),
         thread_id=tid,
-        workflow_status=workflow_status,  # type: ignore[arg-type]
+        workflow_status=resolved_status,  # type: ignore[arg-type]
         interrupted=interrupted,
         state=snapshot,
     )
+
+
+def _interrupt_review_type(interrupt: Any) -> str:
+    value = getattr(interrupt, "value", interrupt)
+    if isinstance(value, Mapping):
+        review_type = value.get("review_type")
+        return review_type if isinstance(review_type, str) else "unknown"
+    return "unknown"
+
+
+def _snapshot_interrupts(snapshot: Any) -> tuple[Any, ...]:
+    interrupts: list[Any] = []
+    for task in getattr(snapshot, "tasks", ()) or ():
+        interrupts.extend(getattr(task, "interrupts", ()) or ())
+    if not interrupts:
+        interrupts.extend(getattr(snapshot, "interrupts", ()) or ())
+    return tuple(interrupts)
+
+
+def _make_workflow_result_from_snapshot(snapshot: Any, tid: str) -> "WorkflowRunResult":
+    """Reconstruct a public result from a persisted LangGraph snapshot."""
+    values = getattr(snapshot, "values", {})
+    state = dict(values) if isinstance(values, Mapping) else {}
+    interrupts = _snapshot_interrupts(snapshot)
+    if interrupts:
+        state["__interrupt__"] = interrupts
+
+    review_type = next(
+        (
+            candidate
+            for candidate in (_interrupt_review_type(item) for item in interrupts)
+            if candidate in {"diagnosis", "patch"}
+        ),
+        None,
+    )
+    next_nodes = set(getattr(snapshot, "next", ()) or ())
+    if review_type == "diagnosis" or {
+        "diagnosis_review",
+        "mark_diagnosis_review_waiting",
+    } & next_nodes:
+        status = "waiting_diagnosis_review"
+    elif review_type == "patch" or {
+        "patch_review",
+        "mark_patch_review_waiting",
+    } & next_nodes:
+        status = "waiting_patch_review"
+    else:
+        status = None
+
+    return _make_workflow_result(state, tid, workflow_status=status)

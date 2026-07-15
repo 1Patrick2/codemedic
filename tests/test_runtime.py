@@ -196,3 +196,64 @@ def test_compile_workflow_defaults_to_memory_without_sqlite_file(
     compile_workflow()
 
     assert not (tmp_path / "runtime" / "checkpoints" / "codemedic.db").exists()
+
+
+def test_runtime_get_state_recovers_diagnosis_review_after_reopen(tmp_path: Path) -> None:
+    from codemedic.graph.runtime import WorkflowRuntime
+    from codemedic.schemas.diagnosis import DiagnosisResult
+
+    diagnosis = DiagnosisResult(
+        suspected_files=[],
+        root_cause="Needs human diagnosis review",
+        evidence=[],
+        confidence=0.2,
+        missing_information=["More evidence required"],
+    )
+    _, patch_proposal = _mock_agent_outputs()
+    db_path = tmp_path / "checkpoint.db"
+
+    with (
+        patch("codemedic.graph.nodes.run_investigator", return_value=diagnosis),
+        patch("codemedic.agents.fixer.run_fixer", return_value=patch_proposal),
+        WorkflowRuntime(db_path) as runtime_a,
+    ):
+        first = runtime_a.run("Fix the Demo", DEMO_REPO)
+
+    with (
+        patch("codemedic.graph.nodes.run_investigator", return_value=diagnosis),
+        patch("codemedic.agents.fixer.run_fixer", return_value=patch_proposal),
+        WorkflowRuntime(db_path) as runtime_b,
+    ):
+        recovered = runtime_b.get_state(first.thread_id)
+        assert recovered.interrupted is True
+        assert recovered.workflow_status == "waiting_diagnosis_review"
+        assert recovered.state["__interrupt__"][0].value["review_type"] == "diagnosis"
+
+        resumed = runtime_b.resume(
+            "accept_diagnosis",
+            thread_id=first.thread_id,
+            approved_files=FIX_FILES,
+        )
+
+    assert resumed.workflow_status == "waiting_patch_review"
+
+
+def test_runtime_get_state_recovers_patch_review_after_reopen(tmp_path: Path) -> None:
+    from codemedic.graph.runtime import WorkflowRuntime
+
+    diagnosis, patch_proposal = _mock_agent_outputs()
+    db_path = tmp_path / "checkpoint.db"
+
+    with (
+        patch("codemedic.graph.nodes.run_investigator", return_value=diagnosis),
+        patch("codemedic.agents.fixer.run_fixer", return_value=patch_proposal),
+        WorkflowRuntime(db_path) as runtime_a,
+    ):
+        first = runtime_a.run("Fix the Demo", DEMO_REPO)
+
+    with WorkflowRuntime(db_path) as runtime_b:
+        recovered = runtime_b.get_state(first.thread_id)
+
+    assert recovered.interrupted is True
+    assert recovered.workflow_status == "waiting_patch_review"
+    assert recovered.state["__interrupt__"][0].value["review_type"] == "patch"

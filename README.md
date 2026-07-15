@@ -34,7 +34,7 @@ Investigator → Fixer → Human Review → Sandbox → Verifier 闭环，覆盖
 
 ## 当前状态
 
-核心 Graph 路由、跨实例 Checkpoint 恢复、失败反馈重试、公开人工授权 API、Patch/Sandbox/Test 数据契约和确定性 E2E 已通过本地自动化验证；CI 运行记录与最终 PR 门槛仍待完成。真实 LLM Smoke Test 与 Provider 原生 Structured Output 尚未纳入本阶段。
+核心 Graph 路由、跨实例 Checkpoint 恢复、失败反馈重试、公开人工授权 API、Trajectory 和确定性 E2E 已通过本地验证；C7、D1、D2 基线和 E1 迁移提交已通过 CI。当前正在收口 Run Inspector 的跨 Runtime 恢复、人工 Review 流程和轨迹语义；真实 LLM Smoke Test、Evaluation 与 Retrieval 评估尚未开始。
 
 | 阶段 | 内容 | 状态 |
 |------|------|------|
@@ -44,7 +44,10 @@ Investigator → Fixer → Human Review → Sandbox → Verifier 闭环，覆盖
 | Stage 3 | Fixer + Human Review (Interrupt) | ✅ Interrupt / Resume / Retry 反馈已接通 |
 | Stage 4 | Sandbox + Test Runner + Verifier | ✅ 真实 Patch、测试和最终状态判定已验证 |
 | Phase A | 安全加固 | ✅ 完成 |
-| Phase C | Deterministic Closure | ⚠️ C1-C7 已本地验证，CI/PR 门槛待完成 |
+| Phase C | Deterministic Closure | ✅ C1-C7 完成 |
+| Phase D1 | Unified Trajectory | ✅ 基础能力完成 |
+| Phase D2 | Minimal Run Inspector | ⚠️ 原型完成，当前收口中 |
+| Phase E | Real Model Proof | ⏳ 尚未开始 |
 
 ## 测试分层
 
@@ -65,8 +68,8 @@ Investigator → Fixer → Human Review → Sandbox → Verifier 闭环，覆盖
 conda create -n codemedic python=3.11
 conda activate codemedic
 
-# 安装依赖（开发模式含测试工具）
-pip install -e ".[dev]"
+# 安装依赖（开发、测试和 Inspector）
+pip install -e ".[dev,streamlit]"
 
 # 复制环境变量
 cp .env.example .env
@@ -105,6 +108,9 @@ while result.interrupted:
 print(result.state.get('final_status'))
 "
 
+# 启动最小 Run Inspector（可选）
+streamlit run codemedic/inspector_app.py
+
 # 测试
 python -m pytest
 python -m ruff check .
@@ -135,8 +141,12 @@ codemedic/
 │   ├── validation/
 │   │   ├── evidence.py      # Evidence 文件系统校验
 │   │   └── diff.py          # Unified Diff 安全校验
-│   ├── tracing/
-│   │   └── local_trace.py   # JSONL Trace
+│   ├── tracing/              # 运行轨迹记录与读取
+│   │   ├── events.py         # WorkflowEvent
+│   │   ├── recorder.py       # 有序 JSONL 记录
+│   │   ├── serializer.py     # 序列化与脱敏
+│   │   └── reader.py         # 轨迹读取
+│   ├── inspector_app.py      # 可选 Streamlit Run Inspector
 │   └── config.py            # pydantic-settings 配置
 ├── tests/                   # 单元、安全、Graph 集成与真实 Sandbox E2E
 ├── docs/
@@ -148,7 +158,7 @@ codemedic/
 
 ## 模型支持
 
-当前通过 OpenAI-compatible API 使用模型（已测试 DeepSeek V4 Flash via OpenCode Go）。
+当前通过 OpenAI-compatible API 使用模型；真实模型能力证明需要显式 Provider、模型和凭据配置，尚未纳入常规 CI。
 
 > **注意**：Investigator 当前要求模型输出 JSON，并优先使用 `DiagnosisResult.model_validate()` 校验；JSON 无法解析或校验失败时才使用正则兼容性降级路径。当前尚未迁移到 Provider 原生 Structured Output，解析失败时 confidence=0 并路由到人工复核。
 
@@ -166,5 +176,6 @@ codemedic/
 
 - 当前仅支持 Python 项目作为诊断目标
 - Patch Apply 依赖 `git apply`（在 Windows/macOS/Linux 均可使用）
-- Hybrid Retrieval（Stage 5）+ Streamlit UI（Stage 6）尚未实现
-- 无正式 Evaluation 评测套件
+- Hybrid Retrieval（Stage 5）尚未实现
+- Streamlit 目前只有最小 Inspector 原型，完整 UI 仍待后续阶段完善
+- Evaluation 评测套件和真实模型证明尚未开始

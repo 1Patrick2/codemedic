@@ -1,5 +1,6 @@
 import json
 from datetime import datetime, timezone
+from unittest.mock import patch
 
 import pytest
 
@@ -131,3 +132,40 @@ def test_runtime_persists_workflow_trajectory_for_public_run(tmp_path, monkeypat
     assert trajectory["run"]["thread_id"] == result.thread_id
     assert trajectory["run"]["status"] == result.workflow_status
     assert any(event["event_type"] == "workflow_failed" for event in trajectory["events"])
+
+
+def test_review_interrupt_is_not_recorded_as_node_failure(tmp_path, monkeypatch) -> None:
+    from codemedic.graph.runtime import WorkflowRuntime
+    from tests.test_runtime import DEMO_REPO, _mock_agent_outputs
+
+    diagnosis, patch_proposal = _mock_agent_outputs()
+    monkeypatch.chdir(tmp_path)
+    db_path = tmp_path / "checkpoint.db"
+
+    with (
+        patch("codemedic.graph.nodes.run_investigator", return_value=diagnosis),
+        patch("codemedic.agents.fixer.run_fixer", return_value=patch_proposal),
+        WorkflowRuntime(db_path) as runtime,
+    ):
+        first = runtime.run("Fix the Demo", DEMO_REPO)
+        run_id = first.state["run_id"]
+        reader = TrajectoryReader(tmp_path / "runtime" / "runs")
+        events = reader.read_events(run_id)
+
+        assert first.workflow_status == "waiting_patch_review"
+        assert any(
+            event.node == "patch_review" and event.event_type == "interrupt"
+            for event in events
+        )
+        assert not any(
+            event.node == "patch_review" and event.summary.endswith("failed")
+            for event in events
+        )
+        assert not any(event.event_type == "workflow_failed" for event in events)
+
+        runtime.resume("approved", thread_id=first.thread_id)
+
+    events = reader.read_events(run_id)
+    assert [event.sequence for event in events] == list(range(1, len(events) + 1))
+    assert any(event.event_type == "resume" for event in events)
+    assert any(event.event_type == "workflow_completed" for event in events)

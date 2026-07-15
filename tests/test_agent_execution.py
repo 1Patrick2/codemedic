@@ -213,3 +213,17 @@ def test_fixer_execution_entrypoint_returns_parsed_and_raw_metadata(monkeypatch)
     assert execution.raw_text is not None
     assert execution.total_tokens == 20
     assert execution.error is None
+
+
+def test_real_model_task_catalog_has_five_isolated_repair_tasks() -> None:
+    from codemedic.real_model import REAL_MODEL_TASKS
+
+    assert len(REAL_MODEL_TASKS) == 5
+    assert len({task.task_id for task in REAL_MODEL_TASKS}) == 5
+    for task in REAL_MODEL_TASKS:
+        assert task.repository_path.is_dir()
+        assert task.allowed_files
+        assert task.expected_files
+        assert task.expected_files == task.allowed_files
+        assert task.test_commands
+        assert task.forbidden_files

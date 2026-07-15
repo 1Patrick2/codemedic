@@ -169,3 +169,56 @@ def test_review_interrupt_is_not_recorded_as_node_failure(tmp_path, monkeypatch)
     assert [event.sequence for event in events] == list(range(1, len(events) + 1))
     assert any(event.event_type == "resume" for event in events)
     assert any(event.event_type == "workflow_completed" for event in events)
+
+
+def test_agent_execution_metadata_is_kept_in_trajectory_not_state(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    from codemedic.agents.execution import AgentExecutionResult
+    from codemedic.graph.runtime import WorkflowRuntime
+    from tests.test_runtime import DEMO_REPO, _mock_agent_outputs
+
+    diagnosis, patch_proposal = _mock_agent_outputs()
+    investigator_execution = AgentExecutionResult(
+        parsed_result=diagnosis.model_dump(mode="json"),
+        raw_text='{"root_cause":"demo"}',
+        messages=[{"type": "ai", "content": "demo"}],
+        model="test-model",
+        provider="test-provider",
+        total_tokens=10,
+        latency_ms=1.0,
+    )
+    fixer_execution = AgentExecutionResult(
+        parsed_result=patch_proposal.model_dump(mode="json"),
+        raw_text=patch_proposal.unified_diff,
+        messages=[{"type": "ai", "content": patch_proposal.unified_diff}],
+        model="test-model",
+        provider="test-provider",
+        total_tokens=20,
+        latency_ms=2.0,
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "codemedic.graph.nodes.run_investigator_execution",
+        lambda **_: investigator_execution,
+    )
+    monkeypatch.setattr(
+        "codemedic.agents.fixer.run_fixer_execution",
+        lambda **_: fixer_execution,
+    )
+
+    with WorkflowRuntime(tmp_path / "checkpoint.db") as runtime:
+        result = runtime.run("Fix the Demo", DEMO_REPO)
+
+    trajectory = TrajectoryReader(tmp_path / "runtime" / "runs").read_trajectory(
+        result.state["run_id"]
+    )
+    model_responses = [
+        event
+        for event in trajectory["events"]
+        if event["event_type"] == "model_response"
+    ]
+
+    assert any("execution" in event["output_data"] for event in model_responses)
+    assert "execution" not in result.state

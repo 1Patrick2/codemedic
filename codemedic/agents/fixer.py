@@ -8,10 +8,12 @@ then parses the response into a PatchProposal.
 from __future__ import annotations
 
 import re
+import time
 
 from langchain_openai import ChatOpenAI
 from pydantic import SecretStr
 
+from codemedic.agents.execution import AgentExecutionResult, extract_agent_execution
 from codemedic.config import settings
 from codemedic.schemas.diagnosis import DiagnosisResult
 from codemedic.schemas.patch import PatchProposal
@@ -122,6 +124,31 @@ def run_fixer(
     human_feedback: str | None = None,
     verifier_summary: str | None = None,
 ) -> PatchProposal:
+    """Run Fixer and return only its validated business result."""
+    execution = run_fixer_execution(
+        issue,
+        diagnosis,
+        context,
+        previous_patch=previous_patch,
+        failure_feedback=failure_feedback,
+        human_feedback=human_feedback,
+        verifier_summary=verifier_summary,
+    )
+    if execution.error:
+        raise RuntimeError(execution.error)
+    return PatchProposal.model_validate(execution.parsed_result)
+
+
+def run_fixer_execution(
+    issue: str,
+    diagnosis: DiagnosisResult,
+    context: str,
+    *,
+    previous_patch: dict[str, object] | None = None,
+    failure_feedback: str | None = None,
+    human_feedback: str | None = None,
+    verifier_summary: str | None = None,
+) -> AgentExecutionResult:
     """Run the Fixer agent to produce a patch proposal.
 
     Args:
@@ -134,7 +161,7 @@ def run_fixer(
         verifier_summary: Advisory summary from the previous verification.
 
     Returns:
-        A PatchProposal with Unified Diff and rationale.
+        Parsed patch proposal plus raw execution metadata for Trajectory/Evaluation.
     """
     llm = build_fixer()
 
@@ -167,13 +194,34 @@ Generate a Unified Diff patch that fixes all identified bugs."""
         {"role": "user", "content": user_message},
     ]
 
-    response = llm.invoke(messages)
-    content = response.content
-    if isinstance(content, str):
-        result = _parse_fixer_response(content)
-    else:
-        result = _parse_fixer_response(str(content))
-    return result
+    started = time.perf_counter()
+    try:
+        response = llm.invoke(messages)
+        content = response.content
+        raw_text = content if isinstance(content, str) else str(content)
+        parsed = _parse_fixer_response(raw_text)
+        return extract_agent_execution(
+            {"messages": [response]},
+            parsed_result=parsed,
+            model=settings.openai_model_name,
+            provider="openai-compatible",
+            latency_ms=(time.perf_counter() - started) * 1000,
+        )
+    except Exception as exc:
+        empty_patch = PatchProposal(
+            modified_files=[],
+            unified_diff="",
+            rationale="",
+            risks=[],
+            test_suggestions=[],
+        )
+        return AgentExecutionResult(
+            parsed_result=empty_patch.model_dump(mode="json"),
+            model=settings.openai_model_name,
+            provider="openai-compatible",
+            latency_ms=(time.perf_counter() - started) * 1000,
+            error=str(exc),
+        )
 
 
 def _format_retry_context(

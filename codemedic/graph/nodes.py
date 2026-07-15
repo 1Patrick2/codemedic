@@ -10,11 +10,18 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from codemedic.agents.investigator import run_investigator
+from codemedic.agents import fixer as fixer_agent
+from codemedic.agents.execution import AgentExecutionResult
+from codemedic.agents.investigator import run_investigator, run_investigator_execution
 from codemedic.config import settings
 from codemedic.graph.state import RepairState
+from codemedic.schemas.diagnosis import DiagnosisResult
+from codemedic.schemas.patch import PatchProposal
 from codemedic.tools.repository import list_repo_tree, read_file
 from codemedic.tracing.local_trace import LocalTracer
+
+_DEFAULT_RUN_INVESTIGATOR = run_investigator
+_DEFAULT_RUN_FIXER = fixer_agent.run_fixer
 
 
 def _trajectory_recorder(state: RepairState):
@@ -168,12 +175,22 @@ def investigator_node(state: RepairState) -> dict[str, Any]:
 
     tracer = LocalTracer(task_id=state["task_id"])
 
-    diagnosis = run_investigator(
-        issue=state["issue"],
-        repository_path=state["repository_path"],
-        error_log=state.get("error_log"),
-        trace=tracer,
-    )
+    execution: AgentExecutionResult | None = None
+    if run_investigator is _DEFAULT_RUN_INVESTIGATOR:
+        execution = run_investigator_execution(
+            issue=state["issue"],
+            repository_path=state["repository_path"],
+            error_log=state.get("error_log"),
+            trace=tracer,
+        )
+        diagnosis = DiagnosisResult.model_validate(execution.parsed_result)
+    else:
+        diagnosis = run_investigator(
+            issue=state["issue"],
+            repository_path=state["repository_path"],
+            error_log=state.get("error_log"),
+            trace=tracer,
+        )
 
     # Validate evidence against the actual filesystem
     from codemedic.schemas.results import EvidenceValidationResult
@@ -194,11 +211,14 @@ def investigator_node(state: RepairState) -> dict[str, Any]:
     allowed_files = sorted({ev.file_path for ev in validation_result.validated_evidence})
 
     if recorder:
+        response_data: dict[str, Any] = {"diagnosis": diagnosis.model_dump()}
+        if execution is not None:
+            response_data["execution"] = execution.model_dump(mode="json")
         recorder.record(
             node="investigator_agent",
             event_type="model_response",
             summary="Investigator diagnosis received",
-            output_data={"diagnosis": diagnosis.model_dump()},
+            output_data=response_data,
         )
         recorder.record(
             node="evidence_validation",
@@ -227,8 +247,6 @@ def fixer_node(state: RepairState) -> dict[str, Any]:
     Returns:
         Patch proposal and incremented fix_attempt_count.
     """
-    from codemedic.agents.fixer import run_fixer
-
     fix_attempt_count = state.get("fix_attempt_count", 0) + 1
     diagnosis = state.get("diagnosis")
     if diagnosis is None:
@@ -264,22 +282,40 @@ def fixer_node(state: RepairState) -> dict[str, Any]:
         )
 
     try:
-        patch = run_fixer(
-            issue=state["issue"],
-            diagnosis=diagnosis,
-            context=context_str,
-            previous_patch=state.get("previous_patch"),
-            failure_feedback=state.get("failure_feedback"),
-            human_feedback=state.get("human_feedback"),
-            verifier_summary=state.get("verifier_summary"),
-        )
+        execution: AgentExecutionResult | None = None
+        if fixer_agent.run_fixer is _DEFAULT_RUN_FIXER:
+            execution = fixer_agent.run_fixer_execution(
+                issue=state["issue"],
+                diagnosis=diagnosis,
+                context=context_str,
+                previous_patch=state.get("previous_patch"),
+                failure_feedback=state.get("failure_feedback"),
+                human_feedback=state.get("human_feedback"),
+                verifier_summary=state.get("verifier_summary"),
+            )
+            if execution.error:
+                raise RuntimeError(execution.error)
+            patch = PatchProposal.model_validate(execution.parsed_result)
+        else:
+            patch = fixer_agent.run_fixer(
+                issue=state["issue"],
+                diagnosis=diagnosis,
+                context=context_str,
+                previous_patch=state.get("previous_patch"),
+                failure_feedback=state.get("failure_feedback"),
+                human_feedback=state.get("human_feedback"),
+                verifier_summary=state.get("verifier_summary"),
+            )
 
         if recorder:
+            response_data = {"patch": patch.model_dump()}
+            if execution is not None:
+                response_data["execution"] = execution.model_dump(mode="json")
             recorder.record(
                 node="fixer_agent",
                 event_type="model_response",
                 summary="Fixer patch proposal received",
-                output_data={"patch": patch.model_dump()},
+                output_data=response_data,
             )
             recorder.write_artifact(
                 f"patch_{fix_attempt_count}.diff",

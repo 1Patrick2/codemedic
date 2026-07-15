@@ -10,6 +10,7 @@ from __future__ import annotations
 import json as json_lib
 import re
 import time
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,7 @@ from langchain.tools import tool
 from langchain_openai import ChatOpenAI
 from pydantic import SecretStr
 
+from codemedic.agents.execution import AgentExecutionResult, extract_agent_execution
 from codemedic.config import settings
 from codemedic.schemas.diagnosis import DiagnosisResult, Evidence
 from codemedic.tools.context import RepositoryContext
@@ -254,6 +256,23 @@ def run_investigator(
     *,
     trace: LocalTracer | None = None,
 ) -> DiagnosisResult:
+    """Run Investigator and return only its validated business result."""
+    execution = run_investigator_execution(
+        issue,
+        repository_path,
+        error_log,
+        trace=trace,
+    )
+    return DiagnosisResult.model_validate(execution.parsed_result)
+
+
+def run_investigator_execution(
+    issue: str,
+    repository_path: str,
+    error_log: str | None = None,
+    *,
+    trace: LocalTracer | None = None,
+) -> AgentExecutionResult:
     """Run the Investigator agent against a repository issue.
 
     Args:
@@ -263,7 +282,7 @@ def run_investigator(
         trace: Optional LocalTracer instance for recording steps.
 
     Returns:
-        A DiagnosisResult with root cause and evidence.
+        Parsed diagnosis plus raw execution metadata for Trajectory/Evaluation.
     """
     agent = build_investigator(repository_path)
     tracer = trace or LocalTracer(task_id="investigate_cli")
@@ -299,18 +318,26 @@ def run_investigator(
             final_status="success",
         )
 
-        messages = result.get("messages", [])
+        messages = result.get("messages", []) if isinstance(result, Mapping) else []
         final_text = ""
         for msg in reversed(messages):
-            if getattr(msg, "type", None) == "ai" and msg.content:
-                final_text = msg.content
+            content = getattr(msg, "content", None)
+            if getattr(msg, "type", None) == "ai" and content:
+                final_text = content if isinstance(content, str) else str(content)
                 break
 
         if final_text:
             diagnosis = _parse_text_diagnosis(final_text, issue)
-            return diagnosis
+        else:
+            diagnosis = _fallback_diagnosis(issue, str(result))
 
-        return _fallback_diagnosis(issue, str(result))
+        return extract_agent_execution(
+            result if isinstance(result, Mapping) else {},
+            parsed_result=diagnosis,
+            model=settings.openai_model_name,
+            provider="openai-compatible",
+            latency_ms=elapsed_ms,
+        )
 
     except Exception as exc:
         elapsed_ms = int((time.perf_counter() - start) * 1000)
@@ -323,12 +350,19 @@ def run_investigator(
             error=str(exc),
             final_status="error",
         )
-        return DiagnosisResult(
+        diagnosis = DiagnosisResult(
             suspected_files=[],
             root_cause=f"Investigator agent error: {exc}",
             evidence=[],
             confidence=0.0,
             missing_information=["Agent invocation failed — check API key and network"],
+        )
+        return AgentExecutionResult(
+            parsed_result=diagnosis.model_dump(mode="json"),
+            model=settings.openai_model_name,
+            provider="openai-compatible",
+            latency_ms=elapsed_ms,
+            error=str(exc),
         )
 
     finally:

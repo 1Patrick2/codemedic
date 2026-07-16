@@ -40,7 +40,7 @@ Investigator → Fixer → Human Review → Sandbox → Verifier 闭环，覆盖
 
 ## 当前状态
 
-核心 Graph 路由、跨实例 Checkpoint 恢复、失败反馈重试、公开人工授权 API、Trajectory 和确定性 E2E 已通过本地验证；C7、D1、D2 基线和 E1 迁移提交已通过 CI。当前正在收口 Run Inspector 的跨 Runtime 恢复、人工 Review 流程和轨迹语义；真实 LLM Smoke Test、Evaluation 与 Retrieval 评估尚未开始。
+核心 Graph 路由、跨实例 Checkpoint 恢复、失败反馈重试、公开人工授权 API、Trajectory 和确定性 E2E 已通过本地验证；C7、D1、D2、E1、Evaluation Harness 基础和 Retrieval A/B/C 实验框架已经实现。当前真实 LLM 数据采集仍受外发安全门控制，完整 Inspector UI 和基于真实数据的 Retrieval 结论尚未完成。
 
 | 阶段 | 内容 | 状态 |
 |------|------|------|
@@ -52,8 +52,10 @@ Investigator → Fixer → Human Review → Sandbox → Verifier 闭环，覆盖
 | Phase A | 安全加固 | ✅ 完成 |
 | Phase C | Deterministic Closure | ✅ C1-C7 完成 |
 | Phase D1 | Unified Trajectory | ✅ 基础能力完成 |
-| Phase D2 | Minimal Run Inspector | ⚠️ 原型完成，当前收口中 |
-| Phase E | Real Model Proof | ⏳ 尚未开始 |
+| Phase D2 | Minimal Run Inspector | ✅ 原型完成；Evaluation 页面和完整演示待完成 |
+| Phase E | Real Model Proof | ⏳ 等待外发数据授权和真实运行 |
+| Phase F | Evaluation Harness | ✅ 本地 Harness 完成；真实数据闭环待完成 |
+| Phase G | Retrieval Baselines | ✅ A/B/C 框架完成；真实数据对比待完成 |
 
 ## 测试分层
 
@@ -182,6 +184,6 @@ codemedic/
 
 - 当前仅支持 Python 项目作为诊断目标
 - Patch Apply 依赖 `git apply`（在 Windows/macOS/Linux 均可使用）
-- Hybrid Retrieval（Stage 5）尚未实现
-- Streamlit 目前只有最小 Inspector 原型，完整 UI 仍待后续阶段完善
-- Evaluation 评测套件和真实模型证明尚未开始
+- Retrieval 当前仅提供确定性 A/B/C 基线，不引入 Embedding、Vector Database 或独立 Retrieval Agent
+- Streamlit 目前是最小 Inspector 原型，完整 Evaluation 页面和演示收口仍待后续阶段完善
+- Evaluation Harness 已完成本地代码闭环，真实模型结果和阈值评估尚未采集

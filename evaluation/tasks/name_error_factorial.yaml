@@ -1,4 +1,6 @@
 task_id: name_error_factorial
+task_version: "1"
+task_kind: repairable
 repository_path: demo_repos/real_model_tasks/name_error_factorial
 issue: factorial() raises NameError for positive integers.
 error_log: "NameError: name 'resut' is not defined"
@@ -13,4 +15,9 @@ setup_commands: []
 test_commands:
   - [python, -m, pytest, -q]
 expected_root_cause_terms: [resut, result, NameError]
+expected_evidence:
+  - file_path: src/math_helpers.py
+    line_start: 7
+    line_end: 7
+    excerpt: "return resut"
 max_retries: 1

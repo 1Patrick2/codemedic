@@ -7,7 +7,7 @@ error_log: "RuntimeError: failure occurs in an unavailable external service"
 allowed_files:
   - src/app.py
 expected_files:
-  - src/app.py
+  []
 forbidden_files:
   - tests/test_app.py
 setup_commands: []
@@ -16,4 +16,5 @@ test_commands:
 expected_root_cause_terms:
   - unavailable
   - external
+expected_evidence: []
 max_retries: 1

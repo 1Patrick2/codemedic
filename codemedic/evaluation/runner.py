@@ -29,6 +29,9 @@ class EvaluationBatchRunner:
         executor: EvaluationExecutor,
         repeats: int = 1,
         workspace_root: str | Path | None = None,
+        commit_sha: str | None = None,
+        provider: str | None = None,
+        prompt_version: str | None = None,
     ) -> None:
         if not model.strip():
             raise ValueError("model must not be empty")
@@ -38,12 +41,18 @@ class EvaluationBatchRunner:
         self.model = model
         self.executor = executor
         self.repeats = repeats
+        self.commit_sha = commit_sha
+        self.provider = provider
+        self.prompt_version = prompt_version
         self.workspace_root = (
             Path(workspace_root) if workspace_root else self.output_dir / "workspaces"
         )
 
     def run(self, tasks: Iterable[RepairTask]) -> dict[str, Path]:
         """Execute all tasks, recording an explicit result even on harness errors."""
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        (self.output_dir / "workspaces").mkdir(exist_ok=True)
+        (self.output_dir / "trajectories").mkdir(exist_ok=True)
         writer = EvaluationReportWriter(self.output_dir)
         for task in tasks:
             task = RepairTask.model_validate(task)
@@ -93,6 +102,18 @@ class EvaluationBatchRunner:
                     raise ValueError("executor returned a result for a different run_id")
                 if result.model != self.model:
                     raise ValueError("executor returned a result for a different model")
+                metadata = {
+                    "task_version": task.task_version,
+                    "task_kind": task.task_kind,
+                }
+                for field, value in (
+                    ("commit_sha", self.commit_sha),
+                    ("provider", self.provider),
+                    ("prompt_version", self.prompt_version),
+                ):
+                    if getattr(result, field) is None and value is not None:
+                        metadata[field] = value
+                result = result.model_copy(update=metadata)
                 if trajectory is not None and result.trajectory_path is None:
                     result = result.model_copy(
                         update={"trajectory_path": f"trajectories/{run_id}.json"}
@@ -110,8 +131,13 @@ class EvaluationBatchRunner:
         return (
             EvaluationRunResult(
                 task_id=task.task_id,
+                task_version=task.task_version,
+                task_kind=task.task_kind,
                 run_id=run_id,
                 model=self.model,
+                commit_sha=self.commit_sha,
+                provider=self.provider,
+                prompt_version=self.prompt_version,
                 diagnosis_valid=False,
                 evidence_valid=False,
                 correct_file=False,

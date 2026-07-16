@@ -7,7 +7,11 @@ import pytest
 
 from codemedic.evaluation.loader import load_tasks
 from codemedic.evaluation.report import EvaluationReportWriter, summarize_results
-from codemedic.evaluation.run import classify_failure, summarize_trajectory
+from codemedic.evaluation.run import (
+    classify_failure,
+    measure_evidence_accuracy,
+    summarize_trajectory,
+)
 from codemedic.evaluation.runner import EvaluationBatchRunner
 from codemedic.evaluation.schemas import EvaluationRunResult, RepairTask
 
@@ -15,6 +19,8 @@ from codemedic.evaluation.schemas import EvaluationRunResult, RepairTask
 def _task_payload() -> dict:
     return {
         "task_id": "demo-task",
+        "task_version": "2",
+        "task_kind": "repairable",
         "repository_path": "demo_repos/sample_project",
         "issue": "The helper raises a NameError.",
         "error_log": "NameError: name 'resut' is not defined",
@@ -24,6 +30,14 @@ def _task_payload() -> dict:
         "setup_commands": [],
         "test_commands": [["python", "-m", "pytest", "-q"]],
         "expected_root_cause_terms": ["resut", "result"],
+        "expected_evidence": [
+            {
+                "file_path": "src/utils/math_helpers.py",
+                "line_start": 40,
+                "line_end": 40,
+                "excerpt": "resut = 1",
+            }
+        ],
         "max_retries": 1,
     }
 
@@ -73,6 +87,8 @@ def test_loader_reads_yaml_tasks_and_rejects_duplicate_ids(tmp_path) -> None:
         "\n".join(
             [
                 "task_id: demo-task",
+                "task_version: '2'",
+                "task_kind: repairable",
                 "repository_path: demo_repos/sample_project",
                 "issue: The helper raises a NameError.",
                 "error_log: 'NameError: name ''resut'' is not defined'",
@@ -83,6 +99,11 @@ def test_loader_reads_yaml_tasks_and_rejects_duplicate_ids(tmp_path) -> None:
                 "test_commands:",
                 "  - [python, -m, pytest, -q]",
                 "expected_root_cause_terms: [resut, result]",
+                "expected_evidence:",
+                "  - file_path: src/utils/math_helpers.py",
+                "    line_start: 40",
+                "    line_end: 40",
+                "    excerpt: 'resut = 1'",
                 "max_retries: 1",
             ]
         ),
@@ -131,6 +152,8 @@ def test_report_writer_persists_runs_summary_jsonl_report_and_trajectory(tmp_pat
     assert paths["report"].is_file()
     assert (tmp_path / "batch-1" / "trajectories" / "run-1.json").is_file()
     assert json.loads(paths["summary"].read_text(encoding="utf-8"))["total_runs"] == 1
+    run_record = json.loads(paths["runs"].read_text(encoding="utf-8"))
+    assert run_record["trajectory_path"] == "trajectories/run-1.json"
     assert len(paths["runs"].read_text(encoding="utf-8").splitlines()) == 1
     assert "demo-task" in paths["report"].read_text(encoding="utf-8")
 
@@ -165,6 +188,82 @@ def test_summary_includes_usage_and_failure_categories() -> None:
     assert summary["average_token_usage"] == 20.0
     assert summary["average_cost"] == 0.2
     assert summary["failure_categories"] == {"Test Failure": 2}
+
+
+def test_measure_evidence_accuracy_checks_file_line_and_excerpt() -> None:
+    task = RepairTask.model_validate(_task_payload())
+    diagnosis = {
+        "evidence": [
+            {
+                "file_path": "src/utils/math_helpers.py",
+                "line_start": 40,
+                "line_end": 40,
+                "excerpt": "resut = 1",
+            }
+        ]
+    }
+
+    assert measure_evidence_accuracy(diagnosis, task) == {
+        "file": True,
+        "line": True,
+        "excerpt": True,
+    }
+
+    mismatch = diagnosis | {
+        "evidence": [
+            {
+                "file_path": "src/utils/math_helpers.py",
+                "line_start": 41,
+                "line_end": 41,
+                "excerpt": "return result",
+            }
+        ]
+    }
+    assert measure_evidence_accuracy(mismatch, task) == {
+        "file": True,
+        "line": False,
+        "excerpt": False,
+    }
+
+
+def test_unrepairable_task_may_have_no_expected_files() -> None:
+    task = RepairTask.model_validate(
+        _task_payload()
+        | {
+            "task_kind": "unrepairable",
+            "expected_files": [],
+            "expected_evidence": [],
+        }
+    )
+    assert task.expected_files == []
+
+    with pytest.raises(ValueError, match="expected_files"):
+        RepairTask.model_validate(_task_payload() | {"expected_files": []})
+
+
+def test_summary_includes_accuracy_and_authorization_metrics() -> None:
+    summary = summarize_results(
+        [
+            _run_result(
+                evidence_file_accuracy=True,
+                evidence_line_accuracy=True,
+                evidence_excerpt_accuracy=False,
+                human_authorized=True,
+            ),
+            _run_result(
+                run_id="run-2",
+                evidence_file_accuracy=False,
+                evidence_line_accuracy=False,
+                evidence_excerpt_accuracy=False,
+                human_authorized=False,
+            ),
+        ]
+    )
+
+    assert summary["evidence_file_accuracy_rate"] == 0.5
+    assert summary["evidence_line_accuracy_rate"] == 0.5
+    assert summary["evidence_excerpt_accuracy_rate"] == 0.0
+    assert summary["human_authorization_rate"] == 0.5
 
 
 def test_summarize_trajectory_captures_model_usage_and_tool_calls() -> None:
@@ -288,6 +387,48 @@ def test_batch_runner_isolates_each_repeat_and_persists_trajectory(tmp_path) -> 
     assert all(record["trajectory_path"].startswith("trajectories/") for record in run_records)
 
 
+def test_batch_runner_persists_task_metadata_and_output_directories(tmp_path) -> None:
+    source_repo = tmp_path / "source-repo"
+    source_repo.mkdir()
+    task = RepairTask.model_validate(
+        _task_payload()
+        | {
+            "repository_path": source_repo,
+            "task_version": "7",
+            "task_kind": "repairable",
+        }
+    )
+
+    def executor(
+        isolated_task: RepairTask,
+        run_id: str,
+        model: str,
+    ) -> EvaluationRunResult:
+        return _run_result(
+            task_id=isolated_task.task_id,
+            run_id=run_id,
+            model=model,
+        )
+
+    paths = EvaluationBatchRunner(
+        output_dir=tmp_path / "results",
+        model="test-model",
+        executor=executor,
+        commit_sha="abc123",
+        provider="test-provider",
+        prompt_version="prompt-7",
+    ).run([task])
+
+    record = json.loads(paths["runs"].read_text(encoding="utf-8"))
+    assert record["task_version"] == "7"
+    assert record["task_kind"] == "repairable"
+    assert record["commit_sha"] == "abc123"
+    assert record["provider"] == "test-provider"
+    assert record["prompt_version"] == "prompt-7"
+    assert (tmp_path / "results" / "workspaces").is_dir()
+    assert (tmp_path / "results" / "trajectories").is_dir()
+
+
 def test_batch_runner_records_executor_failure_as_failed_result(tmp_path) -> None:
     task = RepairTask.model_validate(_task_payload() | {"repository_path": tmp_path})
 
@@ -298,8 +439,14 @@ def test_batch_runner_records_executor_failure_as_failed_result(tmp_path) -> Non
         output_dir=tmp_path / "results",
         model="test-model",
         executor=executor,
+        commit_sha="abc123",
+        provider="test-provider",
+        prompt_version="prompt-7",
     ).run([task])
 
     result = json.loads(paths["runs"].read_text(encoding="utf-8"))
     assert result["failure_stage"] == "harness"
+    assert result["task_version"] == "2"
+    assert result["commit_sha"] == "abc123"
+    assert result["provider"] == "test-provider"
     assert "controlled executor failure" in result["error"]

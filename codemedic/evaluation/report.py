@@ -16,6 +16,11 @@ def _rate(numerator: float, denominator: int) -> float:
     return numerator / denominator if denominator else 0.0
 
 
+def _optional_bool_rate(values: Iterable[bool | None]) -> float:
+    known = [value for value in values if value is not None]
+    return _rate(sum(known), len(known))
+
+
 def summarize_results(results: Iterable[EvaluationRunResult]) -> dict[str, Any]:
     """Build JSON-safe aggregate metrics for a collection of runs."""
     items = list(results)
@@ -43,12 +48,25 @@ def summarize_results(results: Iterable[EvaluationRunResult]) -> dict[str, Any]:
         "total_runs": total,
         "diagnosis_valid_rate": _rate(sum(result.diagnosis_valid for result in items), total),
         "evidence_valid_rate": _rate(sum(result.evidence_valid for result in items), total),
+        "correct_file_rate": _rate(sum(result.correct_file for result in items), total),
+        "evidence_file_accuracy_rate": _optional_bool_rate(
+            result.evidence_file_accuracy for result in items
+        ),
+        "evidence_line_accuracy_rate": _optional_bool_rate(
+            result.evidence_line_accuracy for result in items
+        ),
+        "evidence_excerpt_accuracy_rate": _optional_bool_rate(
+            result.evidence_excerpt_accuracy for result in items
+        ),
         "diff_valid_rate": _rate(sum(result.diff_valid for result in items), total),
         "patch_apply_rate": _rate(sum(result.patch_applied for result in items), total),
         "final_test_pass_rate": _rate(sum(result.tests_passed for result in items), total),
         "end_to_end_pass_rate": _rate(end_to_end, total),
         "unauthorized_modification_rate": _rate(unauthorized, total),
         "false_pass_rate": _rate(false_pass, total),
+        "human_authorization_rate": _rate(
+            sum(result.human_authorized for result in items), total
+        ),
         "average_retries": _rate(sum(result.retries for result in items), total),
         "average_tool_calls": _rate(sum(result.tool_calls for result in items), total),
         "average_latency_ms": _rate(fsum(result.latency_ms for result in items), total),
@@ -73,6 +91,10 @@ class EvaluationReportWriter:
     ) -> None:
         """Persist one result and its trajectory under the batch directory."""
         result = EvaluationRunResult.model_validate(result)
+        if trajectory is not None and result.trajectory_path is None:
+            result = result.model_copy(
+                update={"trajectory_path": f"trajectories/{result.run_id}.json"}
+            )
         self.output_dir.mkdir(parents=True, exist_ok=True)
         with (self.output_dir / "runs.jsonl").open("a", encoding="utf-8") as stream:
             stream.write(result.model_dump_json() + "\n")
@@ -110,8 +132,13 @@ class EvaluationReportWriter:
             f"- End-to-end pass rate: {summary['end_to_end_pass_rate']:.2%}",
             f"- Patch apply rate: {summary['patch_apply_rate']:.2%}",
             f"- Final test pass rate: {summary['final_test_pass_rate']:.2%}",
+            f"- Correct file rate: {summary['correct_file_rate']:.2%}",
+            f"- Evidence file accuracy: {summary['evidence_file_accuracy_rate']:.2%}",
+            f"- Evidence line accuracy: {summary['evidence_line_accuracy_rate']:.2%}",
+            f"- Evidence excerpt accuracy: {summary['evidence_excerpt_accuracy_rate']:.2%}",
             f"- Unauthorized modification rate: {summary['unauthorized_modification_rate']:.2%}",
             f"- False pass rate: {summary['false_pass_rate']:.2%}",
+            f"- Human authorization rate: {summary['human_authorization_rate']:.2%}",
             f"- Average token usage: {summary['average_token_usage']:.1f}",
             f"- Average cost: {summary['average_cost']:.6f}",
             f"- Failure categories: {summary['failure_categories']}",

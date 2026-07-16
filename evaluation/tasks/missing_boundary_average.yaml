@@ -1,4 +1,6 @@
 task_id: missing_boundary_average
+task_version: "1"
+task_kind: repairable
 repository_path: demo_repos/real_model_tasks/missing_boundary_average
 issue: average() crashes on an empty input instead of returning a safe boundary value.
 error_log: "ZeroDivisionError: division by zero"
@@ -13,4 +15,9 @@ setup_commands: []
 test_commands:
   - [python, -m, pytest, -q]
 expected_root_cause_terms: [empty, len, boundary, ZeroDivisionError]
+expected_evidence:
+  - file_path: src/statistics.py
+    line_start: 2
+    line_end: 2
+    excerpt: "sum(values) / len(values)"
 max_retries: 1

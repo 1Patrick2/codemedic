@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import subprocess
 import sys
 import time
 from math import fsum
@@ -13,10 +14,26 @@ from codemedic.evaluation.loader import load_tasks
 from codemedic.evaluation.runner import EvaluationBatchRunner
 from codemedic.evaluation.schemas import (
     EvaluationRunResult,
+    EvidenceExpectation,
     FailureCategory,
     RepairTask,
 )
 from codemedic.real_model import ensure_real_model_configured
+
+
+def _current_commit_sha() -> str | None:
+    """Read the local checkout SHA without exposing repository contents."""
+    try:
+        completed = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True,
+            check=False,
+            text=True,
+        )
+    except OSError:
+        return None
+    sha = completed.stdout.strip()
+    return sha if completed.returncode == 0 and sha else None
 
 
 def _mapping(value: Any) -> dict[str, Any]:
@@ -52,6 +69,45 @@ def summarize_trajectory(trajectory: dict[str, Any]) -> dict[str, Any]:
         "token_usage": token_usage,
         "cost": fsum(costs),
         "model_latency_ms": fsum(model_latency),
+    }
+
+
+def measure_evidence_accuracy(
+    diagnosis: dict[str, Any],
+    task: RepairTask,
+) -> dict[str, bool | None]:
+    """Compare model evidence with the task's optional gold evidence."""
+    expected = task.expected_evidence
+    if not expected:
+        return {"file": None, "line": None, "excerpt": None}
+
+    observed_by_file = {
+        str(_mapping(item).get("file_path")): _mapping(item)
+        for item in diagnosis.get("evidence", [])
+        if _mapping(item).get("file_path")
+    }
+    file_accuracy = {item.file_path for item in expected} == set(observed_by_file)
+
+    def matches_line(item: EvidenceExpectation) -> bool:
+        observed = observed_by_file.get(item.file_path)
+        return bool(
+            observed
+            and observed.get("line_start") == item.line_start
+            and observed.get("line_end") == item.line_end
+        )
+
+    def matches_excerpt(item: EvidenceExpectation) -> bool:
+        observed = observed_by_file.get(item.file_path)
+        if not observed:
+            return False
+        expected_excerpt = item.excerpt.strip()
+        observed_excerpt = str(observed.get("excerpt", "")).strip()
+        return not expected_excerpt or expected_excerpt in observed_excerpt
+
+    return {
+        "file": file_accuracy,
+        "line": all(matches_line(item) for item in expected),
+        "excerpt": all(matches_excerpt(item) for item in expected),
     }
 
 
@@ -161,6 +217,7 @@ def run_real_model_task(
         for test in tests
     )
     modified_files = [str(path) for path in applied.get("modified_files", [])]
+    evidence_accuracy = measure_evidence_accuracy(diagnosis, task)
     unauthorized = sorted(set(modified_files) - set(task.allowed_files))
     expected_files = set(task.expected_files)
     observed_files = set(modified_files) or set(diff.get("modified_files", []))
@@ -168,6 +225,10 @@ def run_real_model_task(
     final_status = state.get("final_status")
     false_pass = final_status == "通过" and (
         bool(unauthorized) or not tests_passed or not correct_file
+    )
+    human_authorized = any(
+        _mapping(event).get("event_type") == "resume"
+        for event in trajectory_data.get("events", [])
     )
     failure_category = classify_failure(
         state,
@@ -177,8 +238,13 @@ def run_real_model_task(
     )
     result_record = EvaluationRunResult(
         task_id=task.task_id,
+        task_version=task.task_version,
+        task_kind=task.task_kind,
         run_id=run_id,
         model=model,
+        commit_sha=task.commit_sha,
+        provider="openai-compatible",
+        prompt_version="codemedic-current",
         diagnosis_valid=bool(diagnosis),
         evidence_valid=evidence.get("valid") is True,
         correct_file=correct_file,
@@ -186,6 +252,11 @@ def run_real_model_task(
         patch_applied=applied.get("success") is True,
         tests_passed=tests_passed,
         unauthorized_files=unauthorized,
+        modified_files=modified_files,
+        evidence_file_accuracy=evidence_accuracy["file"],
+        evidence_line_accuracy=evidence_accuracy["line"],
+        evidence_excerpt_accuracy=evidence_accuracy["excerpt"],
+        human_authorized=human_authorized,
         false_pass=false_pass,
         retries=int(state.get("retry_count", 0)),
         tool_calls=int(usage["tool_calls"]),
@@ -214,6 +285,9 @@ def main(argv: list[str] | None = None) -> int:
             model=args.model,
             repeats=args.repeats,
             executor=run_real_model_task,
+            commit_sha=_current_commit_sha(),
+            provider="openai-compatible",
+            prompt_version="codemedic-current",
         ).run(tasks)
     except (ValueError, OSError) as exc:
         print(f"Evaluation blocked: {exc}", file=sys.stderr)

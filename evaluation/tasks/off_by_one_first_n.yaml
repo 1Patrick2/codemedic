@@ -1,4 +1,6 @@
 task_id: off_by_one_first_n
+task_version: "1"
+task_kind: repairable
 repository_path: demo_repos/real_model_tasks/off_by_one_first_n
 issue: first_n() returns one item too few when n is positive.
 error_log: "AssertionError: expected 3 items, received 2"
@@ -13,4 +15,9 @@ setup_commands: []
 test_commands:
   - [python, -m, pytest, -q]
 expected_root_cause_terms: [n - 1, off-by-one, slice]
+expected_evidence:
+  - file_path: src/slicing.py
+    line_start: 2
+    line_end: 2
+    excerpt: "items[: n - 1]"
 max_retries: 1

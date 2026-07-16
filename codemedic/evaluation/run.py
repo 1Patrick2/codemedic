@@ -117,46 +117,56 @@ def classify_failure(
     trajectory: dict[str, Any],
     unauthorized_files: list[str],
     tests_passed: bool,
+    correct_file: bool | None = None,
 ) -> FailureCategory | None:
     """Assign one deterministic primary failure category to a run."""
     if state.get("final_status") == "通过":
         return None
 
     for event in trajectory.get("events", []):
-        execution = _mapping(_mapping(event).get("output_data")).get("execution")
+        event_data = _mapping(event)
+        output_data = _mapping(event_data.get("output_data"))
+        if event_data.get("event_type") == "tool_result":
+            tool_result = _mapping(output_data.get("tool_result"))
+            if "error" in str(tool_result.get("content", "")).lower():
+                return "TOOL_CALL_FAILURE"
+        execution = output_data.get("execution")
         error = _mapping(execution).get("error")
         if error:
             text = str(error).lower()
             if "timeout" in text or "timed out" in text:
-                return "Timeout"
+                return "AGENT_TIMEOUT"
             if any(term in text for term in ("api", "provider", "credential", "network")):
-                return "Provider Failure"
+                return "PROVIDER_ERROR"
             if "json" in text or "parse" in text:
-                return "JSON Parse Failure"
+                return "JSON_PARSE_FAILURE"
 
     if unauthorized_files:
-        return "Unauthorized Modification"
+        return "UNAUTHORIZED_FILE"
+
+    if correct_file is False:
+        return "WRONG_FILE"
 
     evidence = _mapping(state.get("evidence_validation"))
     if evidence.get("valid") is not True:
-        return "Evidence Line Failure"
+        return "EVIDENCE_FAILURE"
 
     diagnosis = _mapping(state.get("diagnosis"))
     if not diagnosis:
-        return "Diagnosis Failure"
+        return "SCHEMA_FAILURE"
 
     diff = _mapping(state.get("diff_validation"))
     if diff.get("valid") is not True:
-        return "Diff Format Failure"
+        return "DIFF_FORMAT_FAILURE"
 
     applied = _mapping(state.get("patch_apply_result"))
     if applied.get("success") is not True:
-        return "Patch Apply Failure"
+        return "PATCH_APPLY_FAILURE"
 
     if not tests_passed:
-        return "Test Failure"
+        return "RETRY_EXHAUSTED" if state.get("retry_count", 0) else "TEST_FAILURE"
 
-    return "Harness Failure"
+    return "HARNESS_FAILURE"
 
 
 def run_real_model_task(
@@ -235,6 +245,7 @@ def run_real_model_task(
         trajectory=trajectory_data,
         unauthorized_files=unauthorized,
         tests_passed=tests_passed,
+        correct_file=correct_file,
     )
     result_record = EvaluationRunResult(
         task_id=task.task_id,

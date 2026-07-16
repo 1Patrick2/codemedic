@@ -8,18 +8,20 @@ from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 
 FailureCategory = Literal[
-    "Provider Failure",
-    "Timeout",
-    "JSON Parse Failure",
-    "Diagnosis Failure",
-    "Retrieval Failure",
-    "Evidence Line Failure",
-    "Diff Format Failure",
-    "Patch Apply Failure",
-    "Unauthorized Modification",
-    "Code Logic Failure",
-    "Test Failure",
-    "Harness Failure",
+    "PROVIDER_ERROR",
+    "AGENT_TIMEOUT",
+    "TOOL_CALL_FAILURE",
+    "RETRIEVAL_FAILURE",
+    "JSON_PARSE_FAILURE",
+    "SCHEMA_FAILURE",
+    "EVIDENCE_FAILURE",
+    "WRONG_FILE",
+    "DIFF_FORMAT_FAILURE",
+    "UNAUTHORIZED_FILE",
+    "PATCH_APPLY_FAILURE",
+    "TEST_FAILURE",
+    "RETRY_EXHAUSTED",
+    "HARNESS_FAILURE",
 ]
 
 TaskKind = Literal["repairable", "unrepairable", "unauthorized_prompt"]

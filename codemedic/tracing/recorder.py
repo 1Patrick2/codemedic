@@ -22,7 +22,9 @@ _SENSITIVE_KEY = re.compile(
 _SENSITIVE_VALUE = re.compile(
     r"(?i)(\bBearer\s+)[^\s,;]+|\bsk-[A-Za-z0-9_-]+"
 )
+_ABSOLUTE_PATH = re.compile(r"(?<![\w:/])(?:[A-Za-z]:[\\/]|/(?!/))[^\s,;]+")
 _REDACTED = "[REDACTED]"
+_LOCAL_PATH = "[LOCAL_PATH]"
 
 _registry_lock = threading.RLock()
 _registry: dict[tuple[str, str], "TrajectoryRecorder"] = {}
@@ -43,12 +45,13 @@ def sanitize_data(value: Any, *, key: str | None = None) -> Any:
     if isinstance(value, datetime):
         return value.isoformat()
     if isinstance(value, str):
-        return _SENSITIVE_VALUE.sub(
+        redacted = _SENSITIVE_VALUE.sub(
             lambda match: (
                 f"{match.group(1)}{_REDACTED}" if match.group(1) else _REDACTED
             ),
             value,
         )
+        return _ABSOLUTE_PATH.sub(_LOCAL_PATH, redacted)
     if value is None or isinstance(value, (bool, int, float)):
         return value
     return str(value)

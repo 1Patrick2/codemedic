@@ -175,19 +175,19 @@ def test_summary_marks_unsafe_results_as_failure() -> None:
 def test_summary_includes_usage_and_failure_categories() -> None:
     summary = summarize_results(
         [
-            _run_result(token_usage=10, cost=0.1, failure_category="Test Failure"),
+            _run_result(token_usage=10, cost=0.1, failure_category="TEST_FAILURE"),
             _run_result(
                 run_id="run-2",
                 token_usage=30,
                 cost=0.3,
-                failure_category="Test Failure",
+                failure_category="TEST_FAILURE",
             ),
         ]
     )
 
     assert summary["average_token_usage"] == 20.0
     assert summary["average_cost"] == 0.2
-    assert summary["failure_categories"] == {"Test Failure": 2}
+    assert summary["failure_categories"] == {"TEST_FAILURE": 2}
 
 
 def test_measure_evidence_accuracy_checks_file_line_and_excerpt() -> None:
@@ -312,19 +312,19 @@ def test_summarize_trajectory_captures_model_usage_and_tool_calls() -> None:
             {"final_status": "人工复核", "diagnosis": {}, "evidence_validation": {"valid": False}},
             [],
             False,
-            "Evidence Line Failure",
+            "EVIDENCE_FAILURE",
         ),
         (
             {"final_status": "人工复核", "diagnosis": {}, "evidence_validation": {"valid": True}},
             ["README.md"],
             True,
-            "Unauthorized Modification",
+            "UNAUTHORIZED_FILE",
         ),
         (
             {"final_status": "人工复核", "diagnosis": {}, "evidence_validation": {"valid": True}},
             [],
             False,
-            "Diagnosis Failure",
+            "SCHEMA_FAILURE",
         ),
     ],
 )
@@ -342,6 +342,71 @@ def test_classify_failure_returns_one_deterministic_category(
             tests_passed=tests_passed,
         )
         == expected
+    )
+
+
+def test_classify_failure_uses_machine_codes_for_provider_tool_wrong_file_and_retry() -> None:
+    state = {
+        "final_status": "waiting",
+        "diagnosis": {"root_cause": "broken"},
+        "evidence_validation": {"valid": True},
+        "diff_validation": {"valid": True},
+        "patch_apply_result": {"success": True},
+    }
+
+    assert (
+        classify_failure(
+            state,
+            trajectory={
+                "events": [
+                    {
+                        "event_type": "model_response",
+                        "output_data": {"execution": {"error": "provider timeout"}},
+                    }
+                ]
+            },
+            unauthorized_files=[],
+            tests_passed=True,
+            correct_file=True,
+        )
+        == "AGENT_TIMEOUT"
+    )
+    assert (
+        classify_failure(
+            state,
+            trajectory={
+                "events": [
+                    {
+                        "event_type": "tool_result",
+                        "output_data": {"tool_result": {"content": "ERROR: read failed"}},
+                    }
+                ]
+            },
+            unauthorized_files=[],
+            tests_passed=True,
+            correct_file=True,
+        )
+        == "TOOL_CALL_FAILURE"
+    )
+    assert (
+        classify_failure(
+            state,
+            trajectory={"events": []},
+            unauthorized_files=[],
+            tests_passed=False,
+            correct_file=False,
+        )
+        == "WRONG_FILE"
+    )
+    assert (
+        classify_failure(
+            state | {"retry_count": 1},
+            trajectory={"events": []},
+            unauthorized_files=[],
+            tests_passed=False,
+            correct_file=True,
+        )
+        == "RETRY_EXHAUSTED"
     )
 
 
@@ -445,7 +510,7 @@ def test_batch_runner_records_executor_failure_as_failed_result(tmp_path) -> Non
     ).run([task])
 
     result = json.loads(paths["runs"].read_text(encoding="utf-8"))
-    assert result["failure_stage"] == "harness"
+    assert result["failure_stage"] == "HARNESS_FAILURE"
     assert result["task_version"] == "2"
     assert result["commit_sha"] == "abc123"
     assert result["provider"] == "test-provider"

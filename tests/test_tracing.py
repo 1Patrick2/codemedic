@@ -184,6 +184,14 @@ def test_agent_execution_metadata_is_kept_in_trajectory_not_state(
         parsed_result=diagnosis.model_dump(mode="json"),
         raw_text='{"root_cause":"demo"}',
         messages=[{"type": "ai", "content": "demo"}],
+        tool_calls=[{"id": "call-1", "name": "read_file", "args": {"file_path": "src/app.py"}}],
+        tool_results=[
+            {
+                "tool_call_id": "call-1",
+                "name": "read_file",
+                "content": "1: broken = True",
+            }
+        ],
         model="test-model",
         provider="test-provider",
         total_tokens=10,
@@ -221,4 +229,22 @@ def test_agent_execution_metadata_is_kept_in_trajectory_not_state(
     ]
 
     assert any("execution" in event["output_data"] for event in model_responses)
+    assert any(event["event_type"] == "tool_call" for event in trajectory["events"])
+    assert any(event["event_type"] == "tool_result" for event in trajectory["events"])
     assert "execution" not in result.state
+
+
+def test_trajectory_sanitizes_absolute_paths_and_credentials() -> None:
+    from codemedic.tracing.recorder import sanitize_data
+
+    sanitized = sanitize_data(
+        {
+            "repository_path": r"E:\\private\\repo",
+            "api_key": "sk-secret-value",
+            "relative_file": "src/app.py",
+        }
+    )
+
+    assert sanitized["repository_path"] == "[LOCAL_PATH]"
+    assert sanitized["api_key"] == "[REDACTED]"
+    assert sanitized["relative_file"] == "src/app.py"

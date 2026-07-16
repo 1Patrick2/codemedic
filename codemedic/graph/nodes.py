@@ -31,6 +31,29 @@ def _trajectory_recorder(state: RepairState):
     return get_recorder(state.get("run_id"), state.get("thread_id"))
 
 
+def _record_agent_execution_events(
+    recorder: Any,
+    *,
+    node: str,
+    execution: AgentExecutionResult,
+) -> None:
+    """Record model tool calls/results without putting them into RepairState."""
+    for tool_call in execution.tool_calls:
+        recorder.record(
+            node=node,
+            event_type="tool_call",
+            summary="Agent tool call",
+            output_data={"tool_call": tool_call},
+        )
+    for tool_result in execution.tool_results:
+        recorder.record(
+            node=node,
+            event_type="tool_result",
+            summary="Agent tool result",
+            output_data={"tool_result": tool_result},
+        )
+
+
 def intake(state: RepairState) -> dict[str, Any]:
     """Validate and pre-process inputs.
 
@@ -213,6 +236,11 @@ def investigator_node(state: RepairState) -> dict[str, Any]:
     if recorder:
         response_data: dict[str, Any] = {"diagnosis": diagnosis.model_dump()}
         if execution is not None:
+            _record_agent_execution_events(
+                recorder,
+                node="investigator_agent",
+                execution=execution,
+            )
             response_data["execution"] = execution.model_dump(mode="json")
         recorder.record(
             node="investigator_agent",
@@ -312,6 +340,11 @@ def fixer_node(state: RepairState) -> dict[str, Any]:
         if recorder:
             response_data = {"patch": patch.model_dump()}
             if execution is not None:
+                _record_agent_execution_events(
+                    recorder,
+                    node="fixer_agent",
+                    execution=execution,
+                )
                 response_data["execution"] = execution.model_dump(mode="json")
             recorder.record(
                 node="fixer_agent",

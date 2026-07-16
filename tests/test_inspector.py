@@ -85,7 +85,15 @@ def _inspector_result(
                 "validated_evidence": [item.model_dump() for item in diagnosis.evidence],
             },
             "patch": {"unified_diff": "diff --git a/a.py b/a.py"},
-            "test_results": [{"returncode": 0}],
+            "modified_files": ["src/utils/math_helpers.py"],
+            "diff_validation": {
+                "valid": True,
+                "errors": [],
+                "modified_files": ["src/utils/math_helpers.py"],
+            },
+            "risks": ["low"],
+            "test_suggestions": ["pytest"],
+            "test_results": [{"command": ["pytest"], "returncode": 0}],
             "allowed_files": ["src/utils/math_helpers.py"],
             "approved_files": ["src/utils/math_helpers.py"],
             "retry_count": retry_count,
@@ -104,6 +112,29 @@ def test_show_state_renders_pydantic_diagnosis_and_workflow_details() -> None:
     assert "src/utils/math_helpers.py" in rendered_text
     assert "resut = 1" in rendered_text
     assert "diff --git a/a.py b/a.py" in rendered_text
+    assert "diff_validation" in rendered_text
+    assert "src/utils/math_helpers.py" in rendered_text
+    assert "low" in rendered_text
+    assert "pytest" in rendered_text
+    assert "returncode" in rendered_text
+
+
+def test_trajectory_events_preserve_order_and_filter_by_event_type() -> None:
+    from codemedic.inspector_app import _trajectory_events
+
+    trajectory = {
+        "events": [
+            {"sequence": 1, "event_type": "model_response", "summary": "model"},
+            {"sequence": 2, "event_type": "tool_result", "summary": "tool"},
+            {"sequence": 3, "event_type": "validation", "summary": "valid"},
+        ]
+    }
+
+    assert [event["sequence"] for event in _trajectory_events(trajectory)] == [1, 2, 3]
+    assert [
+        event["event_type"]
+        for event in _trajectory_events(trajectory, {"validation", "model_response"})
+    ] == ["model_response", "validation"]
 
 
 @pytest.mark.parametrize(

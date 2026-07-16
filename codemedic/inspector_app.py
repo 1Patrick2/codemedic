@@ -17,6 +17,22 @@ def _as_mapping(value: object) -> dict[str, Any]:
     return {}
 
 
+def _trajectory_events(
+    trajectory: Mapping[str, Any],
+    event_types: set[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Return JSON-safe trajectory events, optionally filtered by type."""
+    events: list[dict[str, Any]] = []
+    for raw_event in trajectory.get("events", []):
+        event = _as_mapping(raw_event)
+        if not event:
+            continue
+        if event_types and event.get("event_type") not in event_types:
+            continue
+        events.append(event)
+    return events
+
+
 def _streamlit() -> Any:
     try:
         import streamlit as st
@@ -65,9 +81,21 @@ def _show_state(st: Any, result: Any) -> None:
         st.subheader("Patch Review")
         patch = _as_mapping(state["patch"])
         st.code(patch.get("unified_diff", ""), language="diff")
+        st.write(
+            {
+                "modified_files": state.get(
+                    "modified_files", patch.get("modified_files", [])
+                ),
+                "diff_validation": _as_mapping(state.get("diff_validation")),
+                "risks": patch.get("risks", state.get("risks", [])),
+                "test_suggestions": patch.get(
+                    "test_suggestions", state.get("test_suggestions", [])
+                ),
+            }
+        )
     if state.get("test_results"):
         st.subheader("Tests")
-        st.json(state["test_results"])
+        st.json([_as_mapping(item) for item in state["test_results"]])
 
 
 def _show_review(st: Any, result: Any) -> None:
@@ -145,7 +173,24 @@ def main() -> None:
     run_id = result.state.get("run_id")
     if run_id:
         st.subheader("Trajectory")
-        st.json(get_trajectory(run_id))
+        trajectory = get_trajectory(run_id)
+        event_type_values: set[str] = set()
+        for event in _trajectory_events(trajectory):
+            event_type = event.get("event_type")
+            if isinstance(event_type, str):
+                event_type_values.add(event_type)
+        event_types = sorted(event_type_values)
+        selected_types = st.multiselect(
+            "Trajectory event types",
+            event_types,
+            default=event_types,
+        )
+        st.json(
+            {
+                "run": trajectory.get("run", {}),
+                "events": _trajectory_events(trajectory, set(selected_types)),
+            }
+        )
 
 
 if __name__ == "__main__":  # pragma: no cover

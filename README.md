@@ -4,6 +4,8 @@
 
 > Evaluation status: Stage 2 local harness completion is validated without making Provider calls. Real-model result collection and threshold evaluation remain a separate, explicitly gated operation.
 
+> Retrieval status: deterministic Baselines A, B, and C are available for local comparison; no retrieval upgrade is adopted without data-backed evaluation.
+
 基于 LangChain 与 LangGraph 的多 Agent 代码诊断与修复系统。
 
 Investigator → Fixer → Human Review → Sandbox → Verifier 闭环，覆盖从根因定位到测试验证的全流程。

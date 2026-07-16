@@ -26,6 +26,7 @@ task_plan.md
 # Testing
 .pytest_cache/
 .pytest-tmp-*/
+pytest-*/
 .ruff_cache/
 .mypy_cache/
 htmlcov/

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections import Counter
 from collections.abc import Iterable
 from math import fsum
 from pathlib import Path
@@ -33,6 +34,11 @@ def summarize_results(results: Iterable[EvaluationRunResult]) -> dict[str, Any]:
     )
     unauthorized = sum(bool(result.unauthorized_files) for result in items)
     false_pass = sum(result.false_pass for result in items)
+    token_values = [result.token_usage for result in items if result.token_usage is not None]
+    cost_values = [result.cost for result in items if result.cost is not None]
+    failure_categories = Counter(
+        result.failure_category for result in items if result.failure_category
+    )
     return {
         "total_runs": total,
         "diagnosis_valid_rate": _rate(sum(result.diagnosis_valid for result in items), total),
@@ -46,6 +52,9 @@ def summarize_results(results: Iterable[EvaluationRunResult]) -> dict[str, Any]:
         "average_retries": _rate(sum(result.retries for result in items), total),
         "average_tool_calls": _rate(sum(result.tool_calls for result in items), total),
         "average_latency_ms": _rate(fsum(result.latency_ms for result in items), total),
+        "average_token_usage": _rate(fsum(token_values), len(token_values)),
+        "average_cost": _rate(fsum(cost_values), len(cost_values)),
+        "failure_categories": dict(sorted(failure_categories.items())),
     }
 
 
@@ -103,6 +112,9 @@ class EvaluationReportWriter:
             f"- Final test pass rate: {summary['final_test_pass_rate']:.2%}",
             f"- Unauthorized modification rate: {summary['unauthorized_modification_rate']:.2%}",
             f"- False pass rate: {summary['false_pass_rate']:.2%}",
+            f"- Average token usage: {summary['average_token_usage']:.1f}",
+            f"- Average cost: {summary['average_cost']:.6f}",
+            f"- Failure categories: {summary['failure_categories']}",
             "",
             "## Runs",
             "",

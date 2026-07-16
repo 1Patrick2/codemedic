@@ -5,12 +5,17 @@ from __future__ import annotations
 import argparse
 import sys
 import time
+from math import fsum
 from typing import Any
 
 from codemedic.config import settings
 from codemedic.evaluation.loader import load_tasks
 from codemedic.evaluation.runner import EvaluationBatchRunner
-from codemedic.evaluation.schemas import EvaluationRunResult, RepairTask
+from codemedic.evaluation.schemas import (
+    EvaluationRunResult,
+    FailureCategory,
+    RepairTask,
+)
 from codemedic.real_model import ensure_real_model_configured
 
 
@@ -22,6 +27,80 @@ def _mapping(value: Any) -> dict[str, Any]:
         dumped = model_dump()
         return dumped if isinstance(dumped, dict) else {}
     return {}
+
+
+def summarize_trajectory(trajectory: dict[str, Any]) -> dict[str, Any]:
+    """Aggregate measured model usage from persisted model-response events."""
+    tool_calls = 0
+    token_usage = 0
+    costs: list[float] = []
+    model_latency: list[float] = []
+    for event in trajectory.get("events", []):
+        event_data = _mapping(event)
+        if event_data.get("event_type") != "model_response":
+            continue
+        output_data = _mapping(event_data.get("output_data"))
+        execution = _mapping(output_data.get("execution"))
+        tool_calls += len(execution.get("tool_calls", []))
+        token_usage += int(execution.get("total_tokens") or 0)
+        if execution.get("estimated_cost") is not None:
+            costs.append(float(execution["estimated_cost"]))
+        if execution.get("latency_ms") is not None:
+            model_latency.append(float(execution["latency_ms"]))
+    return {
+        "tool_calls": tool_calls,
+        "token_usage": token_usage,
+        "cost": fsum(costs),
+        "model_latency_ms": fsum(model_latency),
+    }
+
+
+def classify_failure(
+    state: dict[str, Any],
+    *,
+    trajectory: dict[str, Any],
+    unauthorized_files: list[str],
+    tests_passed: bool,
+) -> FailureCategory | None:
+    """Assign one deterministic primary failure category to a run."""
+    if state.get("final_status") == "通过":
+        return None
+
+    for event in trajectory.get("events", []):
+        execution = _mapping(_mapping(event).get("output_data")).get("execution")
+        error = _mapping(execution).get("error")
+        if error:
+            text = str(error).lower()
+            if "timeout" in text or "timed out" in text:
+                return "Timeout"
+            if any(term in text for term in ("api", "provider", "credential", "network")):
+                return "Provider Failure"
+            if "json" in text or "parse" in text:
+                return "JSON Parse Failure"
+
+    if unauthorized_files:
+        return "Unauthorized Modification"
+
+    evidence = _mapping(state.get("evidence_validation"))
+    if evidence.get("valid") is not True:
+        return "Evidence Line Failure"
+
+    diagnosis = _mapping(state.get("diagnosis"))
+    if not diagnosis:
+        return "Diagnosis Failure"
+
+    diff = _mapping(state.get("diff_validation"))
+    if diff.get("valid") is not True:
+        return "Diff Format Failure"
+
+    applied = _mapping(state.get("patch_apply_result"))
+    if applied.get("success") is not True:
+        return "Patch Apply Failure"
+
+    if not tests_passed:
+        return "Test Failure"
+
+    return "Harness Failure"
 
 
 def run_real_model_task(
@@ -62,6 +141,16 @@ def run_real_model_task(
                 break
 
     state = result.state
+    trajectory: dict[str, Any] | None = None
+    try:
+        from codemedic.graph.builder import get_trajectory
+
+        trajectory = get_trajectory(str(state.get("run_id")))
+    except (FileNotFoundError, OSError, ValueError):
+        trajectory = None
+
+    trajectory_data = trajectory or {"events": []}
+    usage = summarize_trajectory(trajectory_data)
     diagnosis = _mapping(state.get("diagnosis"))
     evidence = _mapping(state.get("evidence_validation"))
     diff = _mapping(state.get("diff_validation"))
@@ -80,6 +169,12 @@ def run_real_model_task(
     false_pass = final_status == "通过" and (
         bool(unauthorized) or not tests_passed or not correct_file
     )
+    failure_category = classify_failure(
+        state,
+        trajectory=trajectory_data,
+        unauthorized_files=unauthorized,
+        tests_passed=tests_passed,
+    )
     result_record = EvaluationRunResult(
         task_id=task.task_id,
         run_id=run_id,
@@ -93,17 +188,13 @@ def run_real_model_task(
         unauthorized_files=unauthorized,
         false_pass=false_pass,
         retries=int(state.get("retry_count", 0)),
-        tool_calls=0,
+        tool_calls=int(usage["tool_calls"]),
         latency_ms=(time.perf_counter() - started) * 1000,
-        failure_stage=None if final_status == "通过" else "workflow",
+        token_usage=int(usage["token_usage"]) or None,
+        cost=float(usage["cost"]) or None,
+        failure_stage=failure_category,
+        failure_category=failure_category,
     )
-    trajectory: dict[str, Any] | None = None
-    try:
-        from codemedic.graph.builder import get_trajectory
-
-        trajectory = get_trajectory(str(state.get("run_id")))
-    except (FileNotFoundError, OSError, ValueError):
-        trajectory = None
     return result_record, trajectory
 
 

@@ -3,14 +3,32 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, Field
+
+FailureCategory = Literal[
+    "Provider Failure",
+    "Timeout",
+    "JSON Parse Failure",
+    "Diagnosis Failure",
+    "Retrieval Failure",
+    "Evidence Line Failure",
+    "Diff Format Failure",
+    "Patch Apply Failure",
+    "Unauthorized Modification",
+    "Code Logic Failure",
+    "Test Failure",
+    "Harness Failure",
+]
 
 
 class RepairTask(BaseModel):
     """A self-contained repair task used by the evaluation harness."""
 
     task_id: str = Field(min_length=1)
+    task_version: str = Field(default="1", min_length=1)
+    task_kind: Literal["repairable", "unrepairable", "unauthorized_prompt"] = "repairable"
     repository_path: Path
     issue: str = Field(min_length=1)
     error_log: str | None = None
@@ -43,4 +61,6 @@ class EvaluationRunResult(BaseModel):
     token_usage: int | None = Field(default=None, ge=0)
     cost: float | None = Field(default=None, ge=0)
     failure_stage: str | None = None
+    failure_category: FailureCategory | None = None
+    trajectory_path: str | None = None
     error: str | None = None

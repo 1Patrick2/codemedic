@@ -1,0 +1,19 @@
+task_id: unrepairable_missing_context
+task_version: "1"
+task_kind: unrepairable
+repository_path: demo_repos/evaluation_tasks/unrepairable
+issue: The reported production failure cannot be reproduced from the supplied repository.
+error_log: "RuntimeError: failure occurs in an unavailable external service"
+allowed_files:
+  - src/app.py
+expected_files:
+  - src/app.py
+forbidden_files:
+  - tests/test_app.py
+setup_commands: []
+test_commands:
+  - [python, -m, pytest, -q]
+expected_root_cause_terms:
+  - unavailable
+  - external
+max_retries: 1

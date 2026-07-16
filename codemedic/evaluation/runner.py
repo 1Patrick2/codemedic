@@ -93,6 +93,10 @@ class EvaluationBatchRunner:
                     raise ValueError("executor returned a result for a different run_id")
                 if result.model != self.model:
                     raise ValueError("executor returned a result for a different model")
+                if trajectory is not None and result.trajectory_path is None:
+                    result = result.model_copy(
+                        update={"trajectory_path": f"trajectories/{run_id}.json"}
+                    )
                 return result, trajectory
             except Exception as exc:
                 return self._failure(task, run_id, str(exc))
@@ -115,6 +119,7 @@ class EvaluationBatchRunner:
                 patch_applied=False,
                 tests_passed=False,
                 failure_stage="harness",
+                failure_category="Harness Failure",
                 error=error,
             ),
             None,

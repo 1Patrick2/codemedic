@@ -1,5 +1,7 @@
 # CodeMedic
 
+> Current implementation status (2026-07-16): deterministic C1-C7 closure, Trajectory D1, Minimal Inspector D2, and the Evaluation Harness foundation are implemented. Investigator API compatibility is migrated to `create_agent`; controlled real-model execution and evaluation data collection remain gated by explicit Provider configuration. The runtime is Temporary Workspace Isolation, not a production security sandbox.
+
 基于 LangChain 与 LangGraph 的多 Agent 代码诊断与修复系统。
 
 Investigator → Fixer → Human Review → Sandbox → Verifier 闭环，覆盖从根因定位到测试验证的全流程。

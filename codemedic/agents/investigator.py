@@ -287,7 +287,11 @@ def run_investigator_execution(
     agent = build_investigator(repository_path)
     tracer = trace or LocalTracer(task_id="investigate_cli")
 
-    msg_parts = [f"Issue: {issue}", f"Repository path: {repository_path}"]
+    msg_parts = [
+        f"Issue: {issue}",
+        "Repository tools are already bound to the task repository. "
+        "Use repository-relative file paths only; do not include the host path.",
+    ]
     if error_log:
         msg_parts.append(f"\nError log:\n{error_log}")
 

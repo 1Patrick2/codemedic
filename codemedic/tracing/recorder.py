@@ -16,7 +16,7 @@ from codemedic.tracing.events import EventType, WorkflowEvent
 from codemedic.tracing.serializer import event_from_json, event_to_json, json_text
 
 _SENSITIVE_KEY = re.compile(
-    r"(?:api[_-]?key|access[_-]?token|auth(?:orization)?|credential|password|secret|token)",
+    r"(?:api[_-]?key|api[_-]?token|access[_-]?token|auth(?:orization)?|credential|password|secret)",
     re.IGNORECASE,
 )
 _SENSITIVE_VALUE = re.compile(

@@ -181,6 +181,44 @@ def test_investigator_execution_entrypoint_returns_parsed_and_raw_metadata(
     assert execution.error is None
 
 
+def test_investigator_prompt_does_not_expose_host_repository_path(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    from codemedic.agents import investigator
+
+    response = {
+        "messages": [
+            FakeMessage(
+                type="ai",
+                content=(
+                    '```json\n{"root_cause":"ok","suspected_files":[],"evidence":[],'
+                    '"confidence":0.7,"missing_information":[]}\n```'
+                ),
+            )
+        ]
+    }
+    captured: dict[str, object] = {}
+
+    class CapturingAgent(FakeAgent):
+        def invoke(self, input_value: object, config: object) -> dict[str, object]:
+            captured["input"] = input_value
+            return super().invoke(input_value, config)
+
+    monkeypatch.setattr(
+        investigator,
+        "build_investigator",
+        lambda _repository_path: CapturingAgent(response),
+    )
+
+    investigator.run_investigator_execution("Find the bug", str(tmp_path))
+
+    message = captured["input"]["messages"][0]["content"]
+    assert "Repository path:" not in message
+    assert "repository-relative" in message
+    assert str(tmp_path) not in message
+
+
 def test_fixer_execution_entrypoint_returns_parsed_and_raw_metadata(monkeypatch) -> None:
     from codemedic.agents import fixer
     from codemedic.schemas.diagnosis import DiagnosisResult

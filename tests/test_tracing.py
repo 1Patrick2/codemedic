@@ -248,3 +248,21 @@ def test_trajectory_sanitizes_absolute_paths_and_credentials() -> None:
     assert sanitized["repository_path"] == "[LOCAL_PATH]"
     assert sanitized["api_key"] == "[REDACTED]"
     assert sanitized["relative_file"] == "src/app.py"
+
+
+def test_trajectory_preserves_numeric_token_usage_metrics() -> None:
+    from codemedic.tracing.recorder import sanitize_data
+
+    sanitized = sanitize_data(
+        {
+            "prompt_tokens": 11,
+            "completion_tokens": 7,
+            "total_tokens": 18,
+            "api_token": "secret",
+        }
+    )
+
+    assert sanitized["prompt_tokens"] == 11
+    assert sanitized["completion_tokens"] == 7
+    assert sanitized["total_tokens"] == 18
+    assert sanitized["api_token"] == "[REDACTED]"

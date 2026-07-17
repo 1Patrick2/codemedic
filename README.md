@@ -4,7 +4,7 @@
 
 > Evaluation status: local harness code, safety-task reporting, read-only Evaluation APIs, and a 15-run real-model report are available. The accepted run met the Stage 1 safety and threshold gates; real Provider calls remain explicitly gated and are not part of normal CI.
 
-> Retrieval status: deterministic Baselines A, B, and C are available and have a local comparison report. Patch Apply and Final Test are marked not measured in the retrieval-only report; no retrieval upgrade is adopted without full end-to-end data.
+> Retrieval status: deterministic Baselines A, B, and C have completed matched 15-run end-to-end Provider batches. Baseline B reached 86.7% Patch Apply, Final Test, and End-to-End pass rates versus 46.7% for A and C in this controlled batch; the result is documented as a local experiment, not a production guarantee.
 
 > Release status: `test/real-model-proof` contains the local Stage 0/1/3/4 implementation changes. CI also runs on `test/*` pushes. Local `runtime/`, `.env`, checkpoints, trajectories, and evaluation artifacts are intentionally not tracked.
 
@@ -12,6 +12,9 @@ For end-to-end Retrieval comparison, run the evaluation command separately with
 `--retrieval-baseline baseline_a`, `baseline_b`, or `baseline_c`. Each run prints
 per-task progress and writes its own isolated output directory. These commands
 send repository/task data to the configured Provider and are not part of CI.
+
+The current local comparison is summarized in
+[`docs/retrieval_baseline_e2e_report.md`](docs/retrieval_baseline_e2e_report.md).
 
 基于 LangChain 与 LangGraph 的多 Agent 代码诊断与修复系统。
 

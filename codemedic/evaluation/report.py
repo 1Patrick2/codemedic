@@ -71,7 +71,9 @@ def summarize_results(results: Iterable[EvaluationRunResult]) -> dict[str, Any]:
         "average_tool_calls": _rate(sum(result.tool_calls for result in items), total),
         "average_latency_ms": _rate(fsum(result.latency_ms for result in items), total),
         "average_token_usage": _rate(fsum(token_values), len(token_values)),
-        "average_cost": _rate(fsum(cost_values), len(cost_values)),
+        "average_cost": (
+            _rate(fsum(cost_values), len(cost_values)) if cost_values else None
+        ),
         "failure_categories": dict(sorted(failure_categories.items())),
     }
 
@@ -140,7 +142,12 @@ class EvaluationReportWriter:
             f"- False pass rate: {summary['false_pass_rate']:.2%}",
             f"- Human authorization rate: {summary['human_authorization_rate']:.2%}",
             f"- Average token usage: {summary['average_token_usage']:.1f}",
-            f"- Average cost: {summary['average_cost']:.6f}",
+            "- Average cost: "
+            + (
+                f"{summary['average_cost']:.6f}"
+                if summary["average_cost"] is not None
+                else "unknown"
+            ),
             f"- Failure categories: {summary['failure_categories']}",
             "",
             "## Runs",

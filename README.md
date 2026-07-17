@@ -1,10 +1,12 @@
 # CodeMedic
 
-> Current implementation status (2026-07-16): deterministic C1-C7 closure, Trajectory D1, Minimal Inspector D2, and the Evaluation Harness schema, isolated batch runner, safety tasks, and report aggregation are implemented. Investigator API compatibility is migrated to `create_agent`; controlled real-model execution remains gated by explicit Provider configuration. The runtime is Temporary Workspace Isolation, not a production security sandbox.
+> Current implementation status (2026-07-17): deterministic C1-C7 closure, Trajectory D1, Minimal Inspector D2, Evaluation Harness foundations, and Retrieval A/B/C framework are implemented. The first authorized 15-run real-model proof completed, but its Evidence Validation (6.7%) and Patch Apply (60%) rates are below the Stage 1 gates; a targeted rerun is pending after local fixes and a fresh external-data authorization. The runtime is Temporary Workspace Isolation, not a production security sandbox.
 
-> Evaluation status: Stage 2 local harness completion is validated without making Provider calls. Real-model result collection and threshold evaluation remain a separate, explicitly gated operation.
+> Evaluation status: local harness code and safety-task reporting are implemented. Real-model data collection has produced a preserved baseline report, but the Stage 1 thresholds are not yet accepted; real Provider calls remain explicitly gated and are not part of normal CI.
 
 > Retrieval status: deterministic Baselines A, B, and C are available for local comparison; no retrieval upgrade is adopted without data-backed evaluation.
+
+> Release status: `test/real-model-proof` is synchronized with `origin/test/real-model-proof` at `6e6b8e2`. Local `runtime/`, `.env`, checkpoints, trajectories, and evaluation artifacts are intentionally not tracked.
 
 基于 LangChain 与 LangGraph 的多 Agent 代码诊断与修复系统。
 

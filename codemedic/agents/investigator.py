@@ -40,9 +40,11 @@ analyze log output.
 Rules:
 1. Always search for relevant code before jumping to conclusions.
 2. Read suspicious files to confirm your hypotheses.
-3. Reference specific file paths and line numbers in your evidence.
+3. Reference one precise source line in each evidence item. Set
+   line_start == line_end; do not submit multi-line ranges.
 4. If the error log is provided, parse it first to understand the failure.
 5. If you cannot find enough evidence, note what information is missing.
+   Do not use test files as root-cause evidence for implementation bugs.
 6. Do NOT modify any files — you are read-only.
 7. You have a maximum of {max_steps} tool-calling rounds — use them wisely.
 
@@ -57,7 +59,7 @@ a ```json ``` code block. Use this exact schema:
     {{
       "file_path": "relative/path/to/file.py",
       "line_start": 10,
-      "line_end": 12,
+      "line_end": 10,
       "excerpt": "the relevant code line",
       "reason": "Why this supports the root cause"
     }}
@@ -67,7 +69,9 @@ a ```json ``` code block. Use this exact schema:
 }}
 ```
 
-All file paths must be relative to the repository root.
+All file paths must be repository-relative. The excerpt must be copied from
+the exact source line identified by line_start. Do not cite test files as the
+root cause for an implementation bug.
 Only output JSON — no extra commentary outside the code block.
 """
 

@@ -219,6 +219,16 @@ def test_investigator_prompt_does_not_expose_host_repository_path(
     assert str(tmp_path) not in message
 
 
+def test_investigator_prompt_requires_single_line_repository_evidence() -> None:
+    from codemedic.agents.investigator import INVESTIGATOR_PROMPT
+
+    prompt = INVESTIGATOR_PROMPT.format(max_steps=4)
+
+    assert "line_start == line_end" in prompt
+    assert "repository-relative" in prompt
+    assert "test files" in prompt.lower()
+
+
 def test_fixer_execution_entrypoint_returns_parsed_and_raw_metadata(monkeypatch) -> None:
     from codemedic.agents import fixer
     from codemedic.schemas.diagnosis import DiagnosisResult

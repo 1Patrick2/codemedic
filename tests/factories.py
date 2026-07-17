@@ -22,7 +22,6 @@ def build_demo_evidence() -> list[Evidence]:
     math_path = DEMO_REPO / "src/utils/math_helpers.py"
     data_path = DEMO_REPO / "src/services/data_service.py"
     factorial_start = find_line_number(math_path, "resut = 1")
-    factorial_end = find_line_number(math_path, "return result")
     retries_line = find_line_number(data_path, "max_retries: int")
     weighted_line = find_line_number(data_path, "zip(values, weight)")
 
@@ -30,7 +29,7 @@ def build_demo_evidence() -> list[Evidence]:
         Evidence(
             file_path="src/utils/math_helpers.py",
             line_start=factorial_start,
-            line_end=factorial_end,
+            line_end=factorial_start,
             excerpt="resut = 1",
             reason="Variable typo breaks factorial",
         ),

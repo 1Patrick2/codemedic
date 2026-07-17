@@ -190,6 +190,12 @@ def test_summary_includes_usage_and_failure_categories() -> None:
     assert summary["failure_categories"] == {"TEST_FAILURE": 2}
 
 
+def test_summary_does_not_treat_unknown_cost_as_zero() -> None:
+    summary = summarize_results([_run_result(cost=None)])
+
+    assert summary["average_cost"] is None
+
+
 def test_measure_evidence_accuracy_checks_file_line_and_excerpt() -> None:
     task = RepairTask.model_validate(_task_payload())
     diagnosis = {

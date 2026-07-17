@@ -156,9 +156,10 @@ def _validate_single_evidence(
             )
 
         if ev.line_end is not None:
-            if ev.line_end < ev.line_start:
+            if ev.line_end != ev.line_start:
                 issues.append(
-                    f"line_end ({ev.line_end}) < line_start ({ev.line_start})"
+                    "Evidence must reference a single line "
+                    f"(line_start={ev.line_start}, line_end={ev.line_end})"
                 )
             elif ev.line_end > len(lines):
                 issues.append(

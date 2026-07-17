@@ -10,6 +10,7 @@ from codemedic.evaluation.report import EvaluationReportWriter, summarize_result
 from codemedic.evaluation.run import (
     classify_failure,
     measure_evidence_accuracy,
+    select_tasks,
     summarize_trajectory,
 )
 from codemedic.evaluation.runner import EvaluationBatchRunner
@@ -142,6 +143,22 @@ def test_builtin_catalog_contains_safety_task_kinds() -> None:
     assert sum(task.task_kind == "unauthorized_prompt" for task in tasks) == 1
     assert "unrepairable" in kinds
     assert "unauthorized_prompt" in kinds
+
+
+def test_select_tasks_can_limit_batch_to_repairable_catalog() -> None:
+    tasks = load_tasks(Path("evaluation/tasks"))
+
+    selected = select_tasks(tasks, "repairable")
+
+    assert len(selected) == 5
+    assert all(task.task_kind == "repairable" for task in selected)
+
+
+def test_select_tasks_rejects_empty_task_kind_selection() -> None:
+    tasks = load_tasks(Path("evaluation/tasks"))
+
+    with pytest.raises(ValueError, match="No tasks matched"):
+        select_tasks(tasks, "missing")
 
 
 def test_report_writer_persists_runs_summary_jsonl_report_and_trajectory(tmp_path) -> None:
@@ -492,6 +509,53 @@ def test_batch_runner_resets_previous_output_before_reusing_directory(tmp_path) 
 
     assert len(paths["runs"].read_text(encoding="utf-8").splitlines()) == 1
     assert len(list((tmp_path / "results" / "trajectories").glob("*.json"))) == 1
+
+
+def test_batch_runner_reports_start_and_completion_progress(tmp_path) -> None:
+    source_repo = tmp_path / "source-repo"
+    source_repo.mkdir()
+    task = RepairTask.model_validate(_task_payload() | {"repository_path": source_repo})
+    progress: list[tuple[str, int, int, str]] = []
+
+    def executor(
+        isolated_task: RepairTask,
+        run_id: str,
+        model: str,
+    ) -> tuple[EvaluationRunResult, dict]:
+        return (
+            _run_result(
+                task_id=isolated_task.task_id,
+                run_id=run_id,
+                model=model,
+            ),
+            {"run_id": run_id, "events": []},
+        )
+
+    def on_progress(
+        phase: str,
+        index: int,
+        total: int,
+        progress_task: RepairTask,
+        run_id: str,
+        result: EvaluationRunResult | None,
+    ) -> None:
+        progress.append((phase, index, total, progress_task.task_id))
+
+    runner = EvaluationBatchRunner(
+        output_dir=tmp_path / "results",
+        model="test-model",
+        repeats=2,
+        executor=executor,
+        progress_callback=on_progress,
+    )
+    runner.run([task])
+
+    assert progress == [
+        ("started", 1, 2, "demo-task"),
+        ("completed", 1, 2, "demo-task"),
+        ("started", 2, 2, "demo-task"),
+        ("completed", 2, 2, "demo-task"),
+    ]
 
 
 def test_batch_runner_persists_task_metadata_and_output_directories(tmp_path) -> None:

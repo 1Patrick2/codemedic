@@ -6,6 +6,7 @@ import argparse
 import subprocess
 import sys
 import time
+from functools import partial
 from math import fsum
 from typing import Any
 
@@ -19,6 +20,8 @@ from codemedic.evaluation.schemas import (
     RepairTask,
 )
 from codemedic.real_model import ensure_real_model_configured
+from codemedic.retrieval.baselines import make_workflow_retrieval_node
+from codemedic.retrieval.schemas import RetrievalBaseline
 
 
 def _current_commit_sha() -> str | None:
@@ -173,6 +176,8 @@ def run_real_model_task(
     task: RepairTask,
     run_id: str,
     model: str,
+    *,
+    retrieval_baseline: RetrievalBaseline | None = None,
 ) -> tuple[EvaluationRunResult, dict[str, Any] | None]:
     """Run one task through the public workflow with controlled review decisions."""
     ensure_real_model_configured()
@@ -180,7 +185,15 @@ def run_real_model_task(
 
     started = time.perf_counter()
     checkpoint_path = task.repository_path.parent / f".{run_id}.sqlite"
-    with WorkflowRuntime(checkpoint_path=checkpoint_path) as runtime:
+    retrieval_node = (
+        make_workflow_retrieval_node(retrieval_baseline)
+        if retrieval_baseline is not None
+        else None
+    )
+    with WorkflowRuntime(
+        checkpoint_path=checkpoint_path,
+        retrieval_node=retrieval_node,
+    ) as runtime:
         result = runtime.run(
             task.issue,
             str(task.repository_path),
@@ -280,25 +293,88 @@ def run_real_model_task(
     return result_record, trajectory
 
 
+def _print_progress(
+    phase: str,
+    index: int,
+    total: int,
+    task: RepairTask,
+    run_id: str,
+    result: EvaluationRunResult | None,
+    *,
+    baseline: RetrievalBaseline | None = None,
+) -> None:
+    """Print one-line progress without exposing prompts, paths, or secrets."""
+    label = baseline.value if baseline is not None else "default"
+    if phase == "started":
+        print(
+            f"[{index}/{total}] START baseline={label} task={task.task_id} run={run_id}",
+            flush=True,
+        )
+        return
+
+    failure = result.failure_category if result and result.failure_category else "none"
+    patch = result.patch_applied if result else False
+    tests = result.tests_passed if result else False
+    print(
+        f"[{index}/{total}] DONE baseline={label} task={task.task_id} "
+        f"patch={patch} tests={tests} failure={failure}",
+        flush=True,
+    )
+
+
+def select_tasks(tasks: list[RepairTask], task_kind: str | None) -> list[RepairTask]:
+    """Select a catalog subset while refusing empty evaluation batches."""
+    if task_kind is None:
+        return tasks
+    selected = [task for task in tasks if task.task_kind == task_kind]
+    if not selected:
+        raise ValueError(f"No tasks matched task kind: {task_kind}")
+    return selected
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run CodeMedic evaluation tasks.")
     parser.add_argument("--tasks", default="evaluation/tasks", help="Task definition directory")
     parser.add_argument("--output", required=True, help="Isolated evaluation output directory")
     parser.add_argument("--model", default=settings.openai_model_name)
     parser.add_argument("--repeats", type=int, default=3)
+    parser.add_argument(
+        "--task-kind",
+        choices=["repairable", "unrepairable", "unauthorized_prompt"],
+        help="Limit the run to one task kind from the catalog.",
+    )
+    parser.add_argument(
+        "--retrieval-baseline",
+        choices=[baseline.value for baseline in RetrievalBaseline],
+        help="Select a deterministic retrieval baseline for end-to-end comparison.",
+    )
     args = parser.parse_args(argv)
 
     try:
         ensure_real_model_configured()
-        tasks = load_tasks(args.tasks)
+        tasks = select_tasks(load_tasks(args.tasks), args.task_kind)
+        retrieval_baseline = (
+            RetrievalBaseline(args.retrieval_baseline)
+            if args.retrieval_baseline
+            else None
+        )
+        executor = partial(
+            run_real_model_task,
+            retrieval_baseline=retrieval_baseline,
+        )
+        progress_callback = partial(
+            _print_progress,
+            baseline=retrieval_baseline,
+        )
         paths = EvaluationBatchRunner(
             output_dir=args.output,
             model=args.model,
             repeats=args.repeats,
-            executor=run_real_model_task,
+            executor=executor,
             commit_sha=_current_commit_sha(),
             provider="openai-compatible",
             prompt_version="codemedic-current",
+            progress_callback=progress_callback,
         ).run(tasks)
     except (ValueError, OSError) as exc:
         print(f"Evaluation blocked: {exc}", file=sys.stderr)

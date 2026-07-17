@@ -3,6 +3,7 @@ from __future__ import annotations
 from codemedic.evaluation.schemas import RepairTask
 from codemedic.retrieval.baselines import (
     compare_retrieval_baselines,
+    make_workflow_retrieval_node,
     retrieve_baseline_a,
     retrieve_baseline_b,
     retrieve_baseline_c,
@@ -81,6 +82,23 @@ def test_all_retrieval_baselines_share_serializable_result_contract(tmp_path) ->
         for result in results
     )
     assert all("src/math_helpers.py" in result.file_paths for result in results)
+
+
+def test_workflow_retrieval_node_uses_selected_baseline(tmp_path) -> None:
+    repository = _retrieval_repo(tmp_path)
+    state = {
+        "repository_path": str(repository),
+        "issue": "factorial NameError",
+        "error_log": "NameError",
+        "retrieved_context": [],
+        "retrieval_round": 0,
+    }
+
+    result = make_workflow_retrieval_node(RetrievalBaseline.BASELINE_B)(state)
+
+    assert result["retrieval_round"] == 1
+    assert result["retrieved_context"]
+    assert all(item["metadata"]["baseline"] == "baseline_b" for item in result["retrieved_context"])
 
 
 def test_ast_and_repo_map_add_structured_symbols_and_dependencies(tmp_path) -> None:

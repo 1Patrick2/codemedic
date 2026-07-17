@@ -24,7 +24,12 @@ from codemedic.tracing.recorder import (
 class WorkflowRuntime:
     """Manage a compiled workflow and the SQLite connection it owns."""
 
-    def __init__(self, checkpoint_path: str | Path | None = None) -> None:
+    def __init__(
+        self,
+        checkpoint_path: str | Path | None = None,
+        *,
+        retrieval_node: Any | None = None,
+    ) -> None:
         self._closed = False
         self._checkpoint_path = Path(checkpoint_path or self._default_checkpoint_path())
         self._checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
@@ -39,7 +44,10 @@ class WorkflowRuntime:
             self._checkpointer.setup()
             from codemedic.graph import builder
 
-            self._graph = builder.compile_workflow(checkpointer=self._checkpointer)
+            self._graph = builder.compile_workflow(
+                checkpointer=self._checkpointer,
+                retrieval_node=retrieval_node,
+            )
         except Exception:
             self._connection.close()
             raise

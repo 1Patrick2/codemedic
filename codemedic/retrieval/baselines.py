@@ -248,6 +248,51 @@ def retrieve_baseline_c(
     )
 
 
+def make_workflow_retrieval_node(
+    baseline: RetrievalBaseline,
+    *,
+    token_budget: int = 12000,
+):
+    """Create a graph retrieval node backed by one deterministic baseline."""
+    retrieval_functions = {
+        RetrievalBaseline.BASELINE_A: retrieve_baseline_a,
+        RetrievalBaseline.BASELINE_B: retrieve_baseline_b,
+        RetrievalBaseline.BASELINE_C: retrieve_baseline_c,
+    }
+    retrieve = retrieval_functions[baseline]
+
+    def retrieval_node(state: dict[str, Any]) -> dict[str, Any]:
+        result = retrieve(
+            state["repository_path"],
+            state["issue"],
+            state.get("error_log"),
+            token_budget=token_budget,
+        )
+        context = [
+            {
+                "type": "file",
+                "path": item.path,
+                "content": item.content,
+                "metadata": {
+                    "source": "retrieval_baseline",
+                    "baseline": baseline.value,
+                    "score": item.score,
+                    "symbols": item.symbols,
+                    "references": item.references,
+                    "imports": item.imports,
+                    "dependencies": item.dependencies,
+                },
+            }
+            for item in result.files
+        ]
+        return {
+            "retrieved_context": context,
+            "retrieval_round": state.get("retrieval_round", 0) + 1,
+        }
+
+    return retrieval_node
+
+
 def _evidence_metrics(result: RetrievalResult, task: RepairTask) -> tuple[bool, bool | None]:
     selected = {item.path: item.content for item in result.files}
     expected_files = {item.file_path for item in task.expected_evidence}

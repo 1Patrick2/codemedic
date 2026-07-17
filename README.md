@@ -8,6 +8,11 @@
 
 > Release status: `test/real-model-proof` contains the local Stage 0/1/3/4 implementation changes. CI also runs on `test/*` pushes. Local `runtime/`, `.env`, checkpoints, trajectories, and evaluation artifacts are intentionally not tracked.
 
+For end-to-end Retrieval comparison, run the evaluation command separately with
+`--retrieval-baseline baseline_a`, `baseline_b`, or `baseline_c`. Each run prints
+per-task progress and writes its own isolated output directory. These commands
+send repository/task data to the configured Provider and are not part of CI.
+
 基于 LangChain 与 LangGraph 的多 Agent 代码诊断与修复系统。
 
 Investigator → Fixer → Human Review → Sandbox → Verifier 闭环，覆盖从根因定位到测试验证的全流程。

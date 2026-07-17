@@ -16,6 +16,9 @@ EvaluationExecutor = Callable[
     [RepairTask, str, str],
     EvaluationRunResult | tuple[EvaluationRunResult, dict[str, Any] | None],
 ]
+EvaluationProgressCallback = Callable[
+    [str, int, int, RepairTask, str, EvaluationRunResult | None], None
+]
 
 
 class EvaluationBatchRunner:
@@ -32,6 +35,7 @@ class EvaluationBatchRunner:
         commit_sha: str | None = None,
         provider: str | None = None,
         prompt_version: str | None = None,
+        progress_callback: EvaluationProgressCallback | None = None,
     ) -> None:
         if not model.strip():
             raise ValueError("model must not be empty")
@@ -44,6 +48,7 @@ class EvaluationBatchRunner:
         self.commit_sha = commit_sha
         self.provider = provider
         self.prompt_version = prompt_version
+        self.progress_callback = progress_callback
         self.workspace_root = (
             Path(workspace_root) if workspace_root else self.output_dir / "workspaces"
         )
@@ -55,12 +60,21 @@ class EvaluationBatchRunner:
         (self.output_dir / "workspaces").mkdir(exist_ok=True)
         (self.output_dir / "trajectories").mkdir(exist_ok=True)
         writer = EvaluationReportWriter(self.output_dir)
-        for task in tasks:
-            task = RepairTask.model_validate(task)
+        task_list = [RepairTask.model_validate(task) for task in tasks]
+        total = len(task_list) * self.repeats
+        index = 0
+        for task in task_list:
             for _ in range(self.repeats):
+                index += 1
                 run_id = f"{task.task_id}-{uuid.uuid4().hex}"
+                if self.progress_callback:
+                    self.progress_callback("started", index, total, task, run_id, None)
                 result, trajectory = self._run_one(task, run_id)
                 writer.write_run(result, trajectory=trajectory)
+                if self.progress_callback:
+                    self.progress_callback(
+                        "completed", index, total, task, run_id, result
+                    )
         return writer.finalize()
 
     def _reset_output(self) -> None:

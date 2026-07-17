@@ -96,7 +96,7 @@ def _instrument_node(
     return wrapped
 
 
-def build_workflow() -> StateGraph:
+def build_workflow(retrieval_node: Any | None = None) -> StateGraph:
     """Build and return the repair workflow graph."""
     graph = StateGraph(RepairState)
 
@@ -105,7 +105,7 @@ def build_workflow() -> StateGraph:
         "intake": intake,
         "mark_diagnosis_review_waiting": mark_diagnosis_review_waiting,
         "mark_patch_review_waiting": mark_patch_review_waiting,
-        "hybrid_retrieve": hybrid_retrieve,
+        "hybrid_retrieve": retrieval_node or hybrid_retrieve,
         "investigator_agent": investigator_node,
         "evidence_gate": lambda _state: {},
         "diagnosis_review": diagnosis_review_node,
@@ -210,9 +210,9 @@ def build_workflow() -> StateGraph:
     return graph
 
 
-def compile_workflow(*, checkpointer=None):
+def compile_workflow(*, checkpointer=None, retrieval_node=None):
     """Build and compile the workflow graph."""
-    graph = build_workflow()
+    graph = build_workflow(retrieval_node=retrieval_node)
     cptr = checkpointer or MemorySaver()
     return graph.compile(checkpointer=cptr)
 

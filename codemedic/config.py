@@ -6,6 +6,7 @@ Uses pydantic-settings for typed, validated configuration from environment varia
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 from pydantic_settings import BaseSettings
 
@@ -67,6 +68,17 @@ class Settings(BaseSettings):
 
     max_file_size_bytes: int = 524_288
     """Maximum file size (bytes) the Investigator is allowed to read."""
+
+    execution_backend: Literal["temporary", "docker"] = "temporary"
+    """Backend used to execute tests. Docker is opt-in and fail-closed."""
+
+    docker_image: str = "codemedic-runner:local"
+    """Docker image used by the isolated test runner."""
+
+    docker_timeout_seconds: int = 120
+    docker_memory_limit: str = "512m"
+    docker_cpu_limit: str = "1.0"
+    docker_pids_limit: int = 128
 
     @property
     def resolved_runtime_dir(self) -> Path:

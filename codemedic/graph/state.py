@@ -44,6 +44,8 @@ class RepairState(TypedDict):
     """Path to the sandbox temp copy."""
     sandbox_cleaned: bool
     """Whether no temporary sandbox remains after the last sandbox stage."""
+    execution_backend: Literal["temporary", "docker"]
+    """Test execution backend selected for this workflow run."""
     patch_apply_result: dict[str, Any] | None
     """Result from apply_patch_node (dict for backward compat)."""
     test_results: list[dict[str, Any]]
@@ -88,6 +90,7 @@ def create_initial_state(
     task_id: str | None = None,
     run_id: str | None = None,
     thread_id: str | None = None,
+    execution_backend: Literal["temporary", "docker"] = "temporary",
 ) -> RepairState:
     """Create a fresh RepairState with defaults."""
     import uuid
@@ -110,6 +113,7 @@ def create_initial_state(
         human_feedback=None,
         sandbox_path=None,
         sandbox_cleaned=False,
+        execution_backend=execution_backend,
         patch_apply_result=None,
         test_results=[],
         verifier_summary=None,

@@ -8,6 +8,26 @@
 
 > Release status: `test/real-model-proof` contains the local Stage 0/1/3/4 implementation changes. CI also runs on `test/*` pushes. Local `runtime/`, `.env`, checkpoints, trajectories, and evaluation artifacts are intentionally not tracked.
 
+> Next stage: Docker Runtime is now implemented as an opt-in execution backend. The default remains Temporary Workspace Isolation; Docker E2E is skipped when Docker or the configured image is unavailable.
+
+## Docker Runtime
+
+Docker execution is opt-in through `EXECUTION_BACKEND=docker` or
+`WorkflowRuntime(execution_backend="docker")`. Build the local test image with:
+
+```text
+docker build -f docker/Dockerfile -t codemedic-runner:local .
+```
+
+The Docker backend mounts only the temporary workspace at `/workspace`, disables
+networking, uses a read-only root filesystem, a constrained `/tmp`, a numeric
+non-root user, dropped capabilities, `no-new-privileges`, and CPU/memory/process
+limits. Missing Docker, an unavailable image, command rejection, startup errors,
+or timeout produce a failed `TestResult`; execution never falls back to the host.
+
+The default remains Temporary Workspace Isolation. Even with Docker enabled,
+CodeMedic is not advertised as safe for arbitrary untrusted third-party code.
+
 For end-to-end Retrieval comparison, run the evaluation command separately with
 `--retrieval-baseline baseline_a`, `baseline_b`, or `baseline_c`. Each run prints
 per-task progress and writes its own isolated output directory. These commands

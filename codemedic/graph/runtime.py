@@ -11,8 +11,10 @@ from typing import Any
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.types import Command
 
+from codemedic.config import settings
 from codemedic.graph.state import create_initial_state
 from codemedic.schemas.results import WorkflowRunResult
+from codemedic.tools.docker_runtime import ExecutionBackend
 from codemedic.tracing.events import EventType
 from codemedic.tracing.recorder import (
     TrajectoryRecorder,
@@ -29,8 +31,12 @@ class WorkflowRuntime:
         checkpoint_path: str | Path | None = None,
         *,
         retrieval_node: Any | None = None,
+        execution_backend: str | ExecutionBackend | None = None,
     ) -> None:
         self._closed = False
+        self._execution_backend = ExecutionBackend(
+            execution_backend or settings.execution_backend,
+        )
         self._checkpoint_path = Path(checkpoint_path or self._default_checkpoint_path())
         self._checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
         self._connection = sqlite3.connect(
@@ -67,6 +73,7 @@ class WorkflowRuntime:
         error_log: str | None = None,
         *,
         thread_id: str | None = None,
+        execution_backend: str | ExecutionBackend | None = None,
     ) -> WorkflowRunResult:
         """Invoke a new workflow and return its structured snapshot."""
         self._ensure_open()
@@ -78,6 +85,9 @@ class WorkflowRuntime:
             error_log=error_log,
             run_id=run_id,
             thread_id=tid,
+            execution_backend=ExecutionBackend(
+                execution_backend or self._execution_backend,
+            ).value,
         )
         recorder = TrajectoryRecorder(run_id, tid)
         register_recorder(recorder)

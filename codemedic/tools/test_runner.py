@@ -9,6 +9,7 @@ from pathlib import Path
 
 from codemedic.config import settings
 from codemedic.schemas.results import TestResult
+from codemedic.tools.docker_runtime import ExecutionBackend, run_tests_in_docker
 
 # White-listed test commands — using sys.executable for conda compatibility
 PY = sys.executable
@@ -36,6 +37,7 @@ def run_tests(
     commands: list[list[str]] | None = None,
     *,
     timeout: int | None = None,
+    execution_backend: str | ExecutionBackend | None = None,
 ) -> list[TestResult]:
     """Execute whitelist test commands in the repository.
 
@@ -55,6 +57,10 @@ def run_tests(
             returncode=-1,
             stderr=f"Repository not found: {repo_path}",
         )]
+
+    backend = ExecutionBackend(execution_backend or settings.execution_backend)
+    if backend is ExecutionBackend.DOCKER:
+        return run_tests_in_docker(repo_path, commands, timeout=timeout)
 
     timeout_s = timeout or settings.test_timeout_seconds
     max_output = settings.max_output_length

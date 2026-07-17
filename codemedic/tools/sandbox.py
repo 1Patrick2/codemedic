@@ -52,7 +52,7 @@ def create_temp_copy(repo_path: str) -> str:
 
 
 def _ignore_sandbox_artifacts(_directory: str, names: list[str]) -> set[str]:
-    """Exclude caches and VCS metadata that are not needed for patch tests."""
+    """Exclude caches, VCS metadata, and local secrets from test copies."""
     ignored = {
         ".git",
         ".mypy_cache",
@@ -60,7 +60,10 @@ def _ignore_sandbox_artifacts(_directory: str, names: list[str]) -> set[str]:
         ".ruff_cache",
         "__pycache__",
     }
-    return {name for name in names if name in ignored}
+    return {
+        name for name in names
+        if name in ignored or (name.startswith(".env") and name != ".env.example")
+    }
 
 
 def apply_patch(repo_path: str, unified_diff: str) -> dict[str, Any]:

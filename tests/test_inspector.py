@@ -137,6 +137,68 @@ def test_trajectory_events_preserve_order_and_filter_by_event_type() -> None:
     ] == ["model_response", "validation"]
 
 
+def test_trajectory_events_support_workflow_categories() -> None:
+    from codemedic.inspector_app import _trajectory_events
+
+    trajectory = {
+        "events": [
+            {"sequence": 1, "event_type": "model_response"},
+            {"sequence": 2, "event_type": "tool_result"},
+            {"sequence": 3, "event_type": "validation"},
+            {"sequence": 4, "event_type": "resume"},
+            {"sequence": 5, "event_type": "workflow_failed"},
+        ]
+    }
+
+    assert [
+        event["event_type"]
+        for event in _trajectory_events(trajectory, category="model")
+    ] == ["model_response"]
+    assert [
+        event["event_type"]
+        for event in _trajectory_events(trajectory, category="human")
+    ] == ["resume"]
+
+
+def test_evaluation_runs_can_be_filtered_without_business_logic() -> None:
+    from codemedic.inspector_app import _filter_evaluation_runs
+
+    runs = [
+        {"task_id": "task-a", "model": "model-a", "failure_category": None},
+        {"task_id": "task-b", "model": "model-a", "failure_category": "TEST_FAILURE"},
+        {"task_id": "task-c", "model": "model-b", "failure_category": "WRONG_FILE"},
+    ]
+
+    filtered = _filter_evaluation_runs(
+        runs,
+        model="model-a",
+        failure_category="TEST_FAILURE",
+    )
+
+    assert filtered == [runs[1]]
+
+
+def test_patch_history_renders_ordered_patch_artifacts() -> None:
+    from codemedic.inspector_app import _show_patch_history
+
+    fake_st = FakeStreamlit()
+    _show_patch_history(
+        fake_st,
+        {
+            "artifacts": ["patch_2.diff", "patch_1.diff"],
+            "artifact_contents": {
+                "patch_1.diff": "diff --git a/a.py b/a.py",
+                "patch_2.diff": "diff --git a/a.py b/a.py\n+retry",
+            },
+        },
+    )
+
+    rendered_text = repr(fake_st.outputs)
+    assert "Patch History" in rendered_text
+    assert rendered_text.index("patch_1.diff") < rendered_text.index("patch_2.diff")
+    assert "+retry" in rendered_text
+
+
 @pytest.mark.parametrize(
     ("retry_count", "max_retries", "expected"),
     [(0, 2, True), (1, 2, True), (2, 2, False)],

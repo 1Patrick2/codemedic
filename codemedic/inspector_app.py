@@ -2,10 +2,18 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from pydantic import BaseModel
+
+_TRAJECTORY_CATEGORIES: dict[str, set[str]] = {
+    "model": {"model_request", "model_response"},
+    "tool": {"tool_call", "tool_result"},
+    "validation": {"validation", "patch_apply", "test_result"},
+    "human": {"interrupt", "resume"},
+    "error": {"workflow_failed"},
+}
 
 
 def _as_mapping(value: object) -> dict[str, Any]:
@@ -20,17 +28,42 @@ def _as_mapping(value: object) -> dict[str, Any]:
 def _trajectory_events(
     trajectory: Mapping[str, Any],
     event_types: set[str] | None = None,
+    category: str | None = None,
 ) -> list[dict[str, Any]]:
     """Return JSON-safe trajectory events, optionally filtered by type."""
     events: list[dict[str, Any]] = []
+    category_types = _TRAJECTORY_CATEGORIES.get(category or "")
     for raw_event in trajectory.get("events", []):
         event = _as_mapping(raw_event)
         if not event:
             continue
         if event_types and event.get("event_type") not in event_types:
             continue
+        if category_types and event.get("event_type") not in category_types:
+            continue
         events.append(event)
     return events
+
+
+def _filter_evaluation_runs(
+    runs: Sequence[Mapping[str, Any]],
+    *,
+    task_id: str | None = None,
+    model: str | None = None,
+    failure_category: str | None = None,
+) -> list[dict[str, Any]]:
+    """Filter persisted evaluation rows for presentation only."""
+    filtered: list[dict[str, Any]] = []
+    for raw_run in runs:
+        run = _as_mapping(raw_run)
+        if task_id and run.get("task_id") != task_id:
+            continue
+        if model and run.get("model") != model:
+            continue
+        if failure_category and run.get("failure_category") != failure_category:
+            continue
+        filtered.append(run)
+    return filtered
 
 
 def _streamlit() -> Any:
@@ -139,6 +172,25 @@ def _show_review(st: Any, result: Any) -> None:
         st.rerun()
 
 
+def _show_patch_history(st: Any, trajectory: Mapping[str, Any]) -> None:
+    """Render ordered patch artifacts so retry revisions can be compared."""
+    contents = _as_mapping(trajectory.get("artifact_contents"))
+    patch_names = sorted(
+        name
+        for name in trajectory.get("artifacts", [])
+        if isinstance(name, str) and name.startswith("patch_") and name.endswith(".diff")
+    )
+    if not patch_names:
+        return
+
+    st.subheader("Patch History")
+    for name in patch_names:
+        st.write(name)
+        content = contents.get(name)
+        if isinstance(content, str):
+            st.code(content, language="diff")
+
+
 def _show_evaluation(
     st: Any,
     evaluation_ids: list[str],
@@ -153,7 +205,29 @@ def _show_evaluation(
 
     selected = st.selectbox("Evaluation", evaluation_ids)
     summary = dict(summary_loader(selected))
-    runs = [_as_mapping(run) for run in runs_loader(selected)]
+    all_runs = [_as_mapping(run) for run in runs_loader(selected)]
+    task_options = ["All"] + sorted(
+        {str(run["task_id"]) for run in all_runs if run.get("task_id")}
+    )
+    model_options = ["All"] + sorted(
+        {str(run["model"]) for run in all_runs if run.get("model")}
+    )
+    failure_options = ["All"] + sorted(
+        {
+            str(run["failure_category"])
+            for run in all_runs
+            if run.get("failure_category")
+        }
+    )
+    task_filter = st.selectbox("Evaluation Task", task_options)
+    model_filter = st.selectbox("Evaluation Model", model_options)
+    failure_filter = st.selectbox("Evaluation Failure", failure_options)
+    runs = _filter_evaluation_runs(
+        all_runs,
+        task_id=None if task_filter == "All" else task_filter,
+        model=None if model_filter == "All" else model_filter,
+        failure_category=None if failure_filter == "All" else failure_filter,
+    )
     st.write(
         {
             "evaluation_id": selected,
@@ -222,12 +296,19 @@ def main() -> None:
             event_types,
             default=event_types,
         )
+        category_options = ["all", *sorted(_TRAJECTORY_CATEGORIES)]
+        selected_category = st.selectbox("Trajectory category", category_options)
         st.json(
             {
                 "run": trajectory.get("run", {}),
-                "events": _trajectory_events(trajectory, set(selected_types)),
+                "events": _trajectory_events(
+                    trajectory,
+                    set(selected_types),
+                    category=None if selected_category == "all" else selected_category,
+                ),
             }
         )
+        _show_patch_history(st, trajectory)
 
 
 if __name__ == "__main__":  # pragma: no cover

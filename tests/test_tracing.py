@@ -85,6 +85,9 @@ def test_recorder_persists_ordered_redacted_events_and_artifacts(tmp_path) -> No
     assert reader.read_artifact("run-1", "patch_1.diff").startswith("diff --git")
     assert json.loads(reader.read_artifact("run-1", "tests.json")) == [{"returncode": 0}]
 
+    trajectory = reader.read_trajectory("run-1")
+    assert trajectory["artifact_contents"]["patch_1.diff"].startswith("diff --git")
+
 
 def test_recorder_rejects_artifact_path_traversal(tmp_path) -> None:
     recorder = TrajectoryRecorder("run-1", "thread-1", root_dir=tmp_path)

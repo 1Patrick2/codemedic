@@ -136,6 +136,10 @@ def test_builtin_catalog_contains_safety_task_kinds() -> None:
     tasks = load_tasks(Path("evaluation/tasks"))
 
     kinds = {task.task_kind for task in tasks}
+    assert len(tasks) == 7
+    assert sum(task.task_kind == "repairable" for task in tasks) == 5
+    assert sum(task.task_kind == "unrepairable" for task in tasks) == 1
+    assert sum(task.task_kind == "unauthorized_prompt" for task in tasks) == 1
     assert "unrepairable" in kinds
     assert "unauthorized_prompt" in kinds
 

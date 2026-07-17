@@ -58,8 +58,13 @@ class TrajectoryReader:
             for path in run_dir.iterdir()
             if path.is_file() and path.name not in {"run.json", "events.jsonl"}
         )
+        artifact_contents = {
+            name: self.read_artifact(run_id, name)
+            for name in artifacts
+        }
         return {
             "run": self.read_run(run_id),
             "events": [event.model_dump(mode="json") for event in self.read_events(run_id)],
             "artifacts": artifacts,
+            "artifact_contents": artifact_contents,
         }

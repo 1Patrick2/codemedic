@@ -458,6 +458,38 @@ def test_batch_runner_isolates_each_repeat_and_persists_trajectory(tmp_path) -> 
     assert all(record["trajectory_path"].startswith("trajectories/") for record in run_records)
 
 
+def test_batch_runner_resets_previous_output_before_reusing_directory(tmp_path) -> None:
+    source_repo = tmp_path / "source-repo"
+    source_repo.mkdir()
+    task = RepairTask.model_validate(_task_payload() | {"repository_path": source_repo})
+
+    def executor(
+        isolated_task: RepairTask,
+        run_id: str,
+        model: str,
+    ) -> tuple[EvaluationRunResult, dict]:
+        return (
+            _run_result(
+                task_id=isolated_task.task_id,
+                run_id=run_id,
+                model=model,
+            ),
+            {"run_id": run_id, "events": []},
+        )
+
+    runner = EvaluationBatchRunner(
+        output_dir=tmp_path / "results",
+        model="test-model",
+        repeats=1,
+        executor=executor,
+    )
+    runner.run([task])
+    paths = runner.run([task])
+
+    assert len(paths["runs"].read_text(encoding="utf-8").splitlines()) == 1
+    assert len(list((tmp_path / "results" / "trajectories").glob("*.json"))) == 1
+
+
 def test_batch_runner_persists_task_metadata_and_output_directories(tmp_path) -> None:
     source_repo = tmp_path / "source-repo"
     source_repo.mkdir()

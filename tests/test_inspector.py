@@ -269,3 +269,20 @@ def test_streamlit_inspector_module_is_importable_without_optional_dependency() 
     from codemedic.inspector_app import main
 
     assert callable(main)
+
+
+def test_show_evaluation_uses_public_read_only_loaders() -> None:
+    from codemedic.inspector_app import _show_evaluation
+
+    fake_st = FakeStreamlit()
+    _show_evaluation(
+        fake_st,
+        ["eval-1"],
+        lambda evaluation_id: {"total_runs": 1, "evaluation_id": evaluation_id},
+        lambda evaluation_id: [{"run_id": evaluation_id, "tests_passed": True}],
+    )
+
+    rendered_text = repr(fake_st.outputs)
+    assert "Evaluation" in rendered_text
+    assert "total_runs" in rendered_text
+    assert "eval-1" in rendered_text

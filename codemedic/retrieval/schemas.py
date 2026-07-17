@@ -57,6 +57,8 @@ class RetrievalRun(BaseModel):
     correct_file: bool
     evidence_valid: bool
     evidence_line_accuracy: bool | None = None
+    patch_applied: bool | None = None
+    tests_passed: bool | None = None
     selected_files: list[str] = Field(default_factory=list)
     tool_calls: int = Field(default=0, ge=0)
     token_estimate: int = Field(default=0, ge=0)

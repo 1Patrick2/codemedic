@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from pydantic import BaseModel
@@ -139,10 +139,40 @@ def _show_review(st: Any, result: Any) -> None:
         st.rerun()
 
 
+def _show_evaluation(
+    st: Any,
+    evaluation_ids: list[str],
+    summary_loader: Callable[[str], Mapping[str, Any]],
+    runs_loader: Callable[[str], list[Any]],
+) -> None:
+    """Render Evaluation data supplied by the public read-only API."""
+    st.subheader("Evaluation")
+    if not evaluation_ids:
+        st.write("No persisted evaluations available.")
+        return
+
+    selected = st.selectbox("Evaluation", evaluation_ids)
+    summary = dict(summary_loader(selected))
+    runs = [_as_mapping(run) for run in runs_loader(selected)]
+    st.write(
+        {
+            "evaluation_id": selected,
+            "summary": summary,
+            "run_count": len(runs),
+        }
+    )
+    st.json(runs)
+
+
 def main() -> None:
     """Render the minimal Run Task, Review, Tests, and Trajectory views."""
     st = _streamlit()
     from codemedic.config import settings
+    from codemedic.evaluation.api import (
+        get_evaluation_runs,
+        get_evaluation_summary,
+        list_evaluations,
+    )
     from codemedic.graph.builder import get_run_state, get_trajectory, run_workflow
 
     st.set_page_config(page_title="CodeMedic Run Inspector", layout="wide")
@@ -152,6 +182,13 @@ def main() -> None:
     issue = st.text_area("Issue")
     error_log = st.text_area("Error Log (optional)")
     st.text_input("Model", value=settings.openai_model_name, disabled=True)
+
+    _show_evaluation(
+        st,
+        list_evaluations(),
+        get_evaluation_summary,
+        get_evaluation_runs,
+    )
 
     if st.button("Run Task"):
         result = run_workflow(issue, repository_path, error_log or None)

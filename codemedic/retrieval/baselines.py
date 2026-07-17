@@ -308,6 +308,11 @@ def compare_retrieval_baselines(
             )
 
     summary: dict[str, dict[str, Any]] = {}
+
+    def optional_rate(values: Iterable[bool | None]) -> float | None:
+        known = [value for value in values if value is not None]
+        return sum(known) / len(known) if known else None
+
     for baseline in RetrievalBaseline:
         baseline_runs = [run for run in runs if run.baseline == baseline]
         count = len(baseline_runs)
@@ -324,6 +329,12 @@ def compare_retrieval_baselines(
             / count
             if count
             else 0.0,
+            "patch_apply_rate": optional_rate(
+                run.patch_applied for run in baseline_runs
+            ),
+            "final_test_pass_rate": optional_rate(
+                run.tests_passed for run in baseline_runs
+            ),
             "average_tool_calls": sum(run.tool_calls for run in baseline_runs) / count
             if count
             else 0.0,
@@ -362,19 +373,25 @@ def write_retrieval_report(
     lines = [
         "# Retrieval Baseline Comparison",
         "",
-        "| Baseline | Correct File | Evidence Valid | Evidence Line | Tool Calls | "
-        "Tokens | Latency (ms) |",
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| Baseline | Correct File | Evidence Valid | Evidence Line | Patch Apply | "
+        "Final Test | Tool Calls | Tokens | Latency (ms) |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
+
+    def display_rate(value: float | None) -> str:
+        return f"{value:.3f}" if value is not None else "n/a"
+
     for baseline in report.baselines:
         metrics = report.summary[baseline.value]
         lines.append(
             "| {baseline} | {correct:.3f} | {evidence:.3f} | {line:.3f} | "
-            "{tools:.2f} | {tokens:.2f} | {latency:.2f} |".format(
+            "{patch} | {tests} | {tools:.2f} | {tokens:.2f} | {latency:.2f} |".format(
                 baseline=baseline.value,
                 correct=metrics["correct_file_rate"],
                 evidence=metrics["evidence_valid_rate"],
                 line=metrics["evidence_line_accuracy_rate"],
+                patch=display_rate(metrics["patch_apply_rate"]),
+                tests=display_rate(metrics["final_test_pass_rate"]),
                 tools=metrics["average_tool_calls"],
                 tokens=metrics["average_tokens"],
                 latency=metrics["average_latency_ms"],

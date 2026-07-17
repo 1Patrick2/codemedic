@@ -117,6 +117,16 @@ def test_retrieval_comparison_is_reproducible_and_scores_expected_files(tmp_path
     assert len(report.runs) == 3
     assert all(run.correct_file for run in report.runs)
     assert all(run.evidence_valid for run in report.runs)
+    assert all(run.patch_applied is None for run in report.runs)
+    assert all(run.tests_passed is None for run in report.runs)
+    assert all(
+        report.summary[baseline.value]["patch_apply_rate"] is None
+        for baseline in report.baselines
+    )
+    assert all(
+        report.summary[baseline.value]["final_test_pass_rate"] is None
+        for baseline in report.baselines
+    )
     repeated = compare_retrieval_baselines([task], token_budget=240)
     def stable_fields(item):
         return (
@@ -135,4 +145,5 @@ def test_retrieval_comparison_is_reproducible_and_scores_expected_files(tmp_path
     assert set(paths) == {"summary", "runs", "report"}
     assert all(path.exists() for path in paths.values())
     assert "baseline_a" in paths["summary"].read_text(encoding="utf-8")
+    assert "Patch Apply" in paths["report"].read_text(encoding="utf-8")
     assert len(paths["runs"].read_text(encoding="utf-8").splitlines()) == 3

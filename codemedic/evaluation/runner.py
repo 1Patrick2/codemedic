@@ -50,6 +50,7 @@ class EvaluationBatchRunner:
 
     def run(self, tasks: Iterable[RepairTask]) -> dict[str, Path]:
         """Execute all tasks, recording an explicit result even on harness errors."""
+        self._reset_output()
         self.output_dir.mkdir(parents=True, exist_ok=True)
         (self.output_dir / "workspaces").mkdir(exist_ok=True)
         (self.output_dir / "trajectories").mkdir(exist_ok=True)
@@ -61,6 +62,26 @@ class EvaluationBatchRunner:
                 result, trajectory = self._run_one(task, run_id)
                 writer.write_run(result, trajectory=trajectory)
         return writer.finalize()
+
+    def _reset_output(self) -> None:
+        """Remove only prior artifacts owned by this evaluation directory."""
+        if not self.output_dir.exists():
+            return
+
+        for filename in ("runs.jsonl", "summary.json", "report.md"):
+            path = self.output_dir / filename
+            if path.is_file():
+                path.unlink()
+
+        for directory_name in ("trajectories", "workspaces"):
+            directory = self.output_dir / directory_name
+            if not directory.is_dir():
+                continue
+            for child in directory.iterdir():
+                if child.is_dir():
+                    shutil.rmtree(child)
+                else:
+                    child.unlink()
 
     def _run_one(
         self,

@@ -892,8 +892,10 @@ def run_tests_node(state: RepairState) -> dict[str, Any]:
         }
 
     try:
+        test_cmds = state.get("test_commands")
         results = run_tests(
             str(sandbox_path),
+            commands=test_cmds,
             execution_backend=state.get("execution_backend", settings.execution_backend),
         )
         serialized = [r.model_dump() for r in results]

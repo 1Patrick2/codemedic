@@ -405,7 +405,9 @@ def test_classify_failure_uses_machine_codes_for_provider_tool_wrong_file_and_re
                 "events": [
                     {
                         "event_type": "tool_result",
-                        "output_data": {"tool_result": {"content": "ERROR: read failed"}},
+                        "output_data": {
+                            "tool_result": {"is_error": True, "content": "read failed"},
+                        },
                     }
                 ]
             },
@@ -414,6 +416,24 @@ def test_classify_failure_uses_machine_codes_for_provider_tool_wrong_file_and_re
             correct_file=True,
         )
         == "TOOL_CALL_FAILURE"
+    )
+    # Text with "error" in content but no structured flag must NOT match
+    assert (
+        classify_failure(
+            state,
+            trajectory={
+                "events": [
+                    {
+                        "event_type": "tool_result",
+                        "output_data": {"tool_result": {"content": "NameError: x not defined"}},
+                    }
+                ]
+            },
+            unauthorized_files=[],
+            tests_passed=True,
+            correct_file=True,
+        )
+        != "TOOL_CALL_FAILURE"
     )
     assert (
         classify_failure(

@@ -95,3 +95,17 @@ class EvaluationRunResult(BaseModel):
     failure_category: FailureCategory | None = None
     trajectory_path: str | None = None
     error: str | None = None
+
+    # Human-assisted metrics (Stage 4)
+    review_policy: str = "manual"
+    """Whether human review was required: 'manual' or 'controlled_auto'."""
+    human_assisted: bool = True
+    """Whether the run used any human or automated review decision."""
+    autonomous_success: bool | None = None
+    """Whether the run succeeded without any human/controlled decisions."""
+    human_assisted_success: bool | None = None
+    """Whether the run succeeded with human/controlled assisted decisions."""
+    diagnosis_review_decision: str | None = None
+    """Decision from diagnosis review: 'accept_diagnosis', 'reject', or None."""
+    patch_review_decision: str | None = None
+    """Decision from patch review: 'approved', 'rejected', 'retry', or None."""

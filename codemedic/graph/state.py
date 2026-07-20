@@ -38,6 +38,8 @@ class RepairState(TypedDict):
     """Test failure feedback to pass to Fixer on retry."""
     human_feedback: str | None
     """Human-provided feedback for retry."""
+    test_commands: list[list[str]] | None
+    """Per-run test command overrides from evaluation tasks."""
 
     # ── Sandbox ──────────────────────────────────────────────────────
     sandbox_path: str | None
@@ -94,6 +96,7 @@ def create_initial_state(
     thread_id: str | None = None,
     execution_backend: Literal["temporary", "docker"] = "temporary",
     review_policy: str = "manual",
+    test_commands: list[list[str]] | None = None,
 ) -> RepairState:
     """Create a fresh RepairState with defaults."""
     import uuid
@@ -114,6 +117,7 @@ def create_initial_state(
         previous_patch=None,
         failure_feedback=None,
         human_feedback=None,
+        test_commands=test_commands,
         sandbox_path=None,
         sandbox_cleaned=False,
         execution_backend=execution_backend,

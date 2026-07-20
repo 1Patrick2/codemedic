@@ -131,7 +131,11 @@ def classify_failure(
         output_data = _mapping(event_data.get("output_data"))
         if event_data.get("event_type") == "tool_result":
             tool_result = _mapping(output_data.get("tool_result"))
-            if "error" in str(tool_result.get("content", "")).lower():
+            # Use structured fields only — never match on content text
+            # containing "error" (which may be legitimate diagnosis content).
+            is_error = tool_result.get("is_error", None)
+            status = tool_result.get("status", "")
+            if is_error is True or status == "error":
                 return "TOOL_CALL_FAILURE"
         execution = output_data.get("execution")
         error = _mapping(execution).get("error")
@@ -200,6 +204,9 @@ def run_real_model_task(
             task.error_log,
             thread_id=run_id,
             review_policy="controlled_auto",
+            model=model,
+            test_commands=task.test_commands,
+            max_retries=task.max_retries,
         )
         for _ in range(task.max_retries + 2):
             if not result.interrupted:
@@ -290,6 +297,10 @@ def run_real_model_task(
         cost=float(usage["cost"]) or None,
         failure_stage=failure_category,
         failure_category=failure_category,
+        review_policy="controlled_auto",
+        human_assisted=human_authorized,
+        autonomous_success=False if human_authorized else None,
+        human_assisted_success=final_status == "通过" if human_authorized else None,
     )
     return result_record, trajectory
 

@@ -75,11 +75,25 @@ class WorkflowRuntime:
         thread_id: str | None = None,
         execution_backend: str | ExecutionBackend | None = None,
         review_policy: str | None = None,
+        model: str | None = None,
+        test_commands: list[list[str]] | None = None,
+        max_retries: int | None = None,
     ) -> WorkflowRunResult:
         """Invoke a new workflow and return its structured snapshot."""
         self._ensure_open()
         tid = thread_id or str(uuid.uuid4())
         run_id = f"run_{uuid.uuid4().hex}"
+
+        # Per-run config overrides — applied temporarily to settings
+        _original_model = None
+        if model is not None and model != settings.openai_model_name:
+            _original_model = settings.openai_model_name
+            settings.openai_model_name = model
+        _original_retries = None
+        if max_retries is not None and max_retries != settings.max_fixer_retries:
+            _original_retries = settings.max_fixer_retries
+            settings.max_fixer_retries = max_retries
+
         initial = create_initial_state(
             issue=issue,
             repository_path=repository_path,
@@ -90,6 +104,7 @@ class WorkflowRuntime:
                 execution_backend or self._execution_backend,
             ).value,
             review_policy=review_policy or "manual",
+            test_commands=test_commands,
         )
         recorder = TrajectoryRecorder(run_id, tid)
         register_recorder(recorder)
@@ -107,6 +122,10 @@ class WorkflowRuntime:
             raise
         finally:
             unregister_recorder(run_id, tid)
+            if _original_model is not None:
+                settings.openai_model_name = _original_model
+            if _original_retries is not None:
+                settings.max_fixer_retries = _original_retries
             recorder.close()
 
     def resume(

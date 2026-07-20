@@ -44,7 +44,7 @@ class FakeStreamlit:
             return self.reason
         return value
 
-    def button(self, _label: str) -> bool:
+    def button(self, _label: str, **kwargs: object) -> bool:
         return self.button_value
 
     def rerun(self) -> None:

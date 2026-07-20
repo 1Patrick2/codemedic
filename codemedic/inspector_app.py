@@ -159,16 +159,24 @@ def _show_review(st: Any, result: Any) -> None:
         approved_files = None
     reason = st.text_area("Reason / Retry Feedback")
 
-    if st.button("Resume Workflow"):
+    resume_disabled = st.session_state.get("resume_in_progress", False)
+    if st.button("Resume Workflow", disabled=resume_disabled):
         from codemedic.graph.builder import resume_workflow
 
-        result = resume_workflow(
-            decision,
-            reason,
-            thread_id=result.thread_id,
-            approved_files=approved_files,
-        )
-        st.session_state["workflow_result"] = result
+        st.session_state["resume_in_progress"] = True
+        try:
+            result = resume_workflow(
+                decision,
+                reason,
+                thread_id=result.thread_id,
+                approved_files=approved_files,
+            )
+            st.session_state["workflow_result"] = result
+        except Exception as exc:
+            st.error("Workflow resume failed")
+            st.exception(exc)
+        finally:
+            st.session_state["resume_in_progress"] = False
         st.rerun()
 
 
@@ -238,6 +246,23 @@ def _show_evaluation(
     st.json(runs)
 
 
+def _validate_run_inputs(
+    repository_path: str,
+    issue: str,
+) -> list[str]:
+    """Validate run inputs before calling the workflow."""
+    from pathlib import Path
+
+    errors: list[str] = []
+    if not repository_path.strip():
+        errors.append("Repository Path is required.")
+    elif not Path(repository_path).is_dir():
+        errors.append(f"Repository Path does not exist or is not a directory: {repository_path}")
+    if not issue.strip():
+        errors.append("Issue is required.")
+    return errors
+
+
 def main() -> None:
     """Render the minimal Run Task, Review, Tests, and Trajectory views."""
     st = _streamlit()
@@ -252,6 +277,13 @@ def main() -> None:
     st.set_page_config(page_title="CodeMedic Run Inspector", layout="wide")
     st.title("CodeMedic Run Inspector")
 
+    # ── Session state for anti-duplicate-click ───────────────────────
+    if "run_in_progress" not in st.session_state:
+        st.session_state["run_in_progress"] = False
+    if "resume_in_progress" not in st.session_state:
+        st.session_state["resume_in_progress"] = False
+
+    # ── Input form ───────────────────────────────────────────────────
     repository_path = st.text_input("Repository Path")
     issue = st.text_area("Issue")
     error_log = st.text_area("Error Log (optional)")
@@ -264,19 +296,50 @@ def main() -> None:
         get_evaluation_runs,
     )
 
-    if st.button("Run Task"):
-        result = run_workflow(issue, repository_path, error_log or None)
-        st.session_state["workflow_result"] = result
+    # ── Run button ───────────────────────────────────────────────────
+    run_disabled = st.session_state["run_in_progress"]
+    if st.button("Run Task", disabled=run_disabled):
+        validation_errors = _validate_run_inputs(repository_path, issue)
+        if validation_errors:
+            for err in validation_errors:
+                st.warning(err)
+        else:
+            st.session_state["run_in_progress"] = True
+            try:
+                with st.spinner("Running workflow... The model request may take several minutes."):
+                    result = run_workflow(issue, repository_path, error_log or None)
+                st.session_state["workflow_result"] = result
+            except Exception as exc:
+                st.error("Workflow failed")
+                st.exception(exc)
+            finally:
+                st.session_state["run_in_progress"] = False
+            st.rerun()
 
     result = st.session_state.get("workflow_result")
     if result is None:
         return
 
+    # ── Refresh state ────────────────────────────────────────────────
     try:
         result = get_run_state(result.thread_id)
         st.session_state["workflow_result"] = result
     except ValueError:
         pass
+
+    # ── Show status ──────────────────────────────────────────────────
+    if result.workflow_status == "waiting_diagnosis_review":
+        st.info("Paused for Diagnosis Review")
+    elif result.workflow_status == "waiting_patch_review":
+        st.info("Paused for Patch Review")
+    elif result.workflow_status == "completed":
+        st.success("Workflow Completed")
+    elif result.workflow_status == "failed":
+        st.error("Workflow Failed")
+    elif result.workflow_status is None:
+        pass
+    else:
+        st.info(f"Status: {result.workflow_status}")
 
     _show_state(st, result)
     _show_review(st, result)
@@ -284,7 +347,12 @@ def main() -> None:
     run_id = result.state.get("run_id")
     if run_id:
         st.subheader("Trajectory")
-        trajectory = get_trajectory(run_id)
+        try:
+            trajectory = get_trajectory(run_id)
+        except Exception:
+            st.write("(Trajectory data not available)")
+            trajectory = {"events": [], "artifacts": [], "artifact_contents": {}}
+
         event_type_values: set[str] = set()
         for event in _trajectory_events(trajectory):
             event_type = event.get("event_type")

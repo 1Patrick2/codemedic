@@ -39,7 +39,7 @@ def test_sqlite_checkpoint_resume_after_runtime_reopen(tmp_path: Path) -> None:
         patch("codemedic.agents.fixer.run_fixer", return_value=patch_proposal),
         WorkflowRuntime(db_path) as runtime_a,
     ):
-        first = runtime_a.run("Fix the Demo", DEMO_REPO)
+        first = runtime_a.run("Fix the Demo", DEMO_REPO, review_policy="controlled_auto")
         assert first.interrupted is True
         assert first.workflow_status == "waiting_patch_review"
         thread_id = first.thread_id
@@ -85,7 +85,7 @@ def test_runtime_unknown_review_decision_is_fail_closed(tmp_path: Path) -> None:
         patch("codemedic.agents.fixer.run_fixer", return_value=patch_proposal),
         WorkflowRuntime(db_path) as runtime,
     ):
-        first = runtime.run("Fix the Demo", DEMO_REPO)
+        first = runtime.run("Fix the Demo", DEMO_REPO, review_policy="controlled_auto")
         result = runtime.resume("banana", thread_id=first.thread_id)
 
     assert result.state["final_status"] == "拒绝"
@@ -102,7 +102,7 @@ def test_runtime_rejects_resume_after_completion(tmp_path: Path) -> None:
         patch("codemedic.agents.fixer.run_fixer", return_value=patch_proposal),
         WorkflowRuntime(db_path) as runtime,
     ):
-        first = runtime.run("Fix the Demo", DEMO_REPO)
+        first = runtime.run("Fix the Demo", DEMO_REPO, review_policy="controlled_auto")
         runtime.resume("approved", thread_id=first.thread_id)
 
         with pytest.raises(ValueError, match="No resumable checkpoint"):
@@ -120,8 +120,14 @@ def test_runtime_keeps_two_threads_independent(tmp_path: Path) -> None:
         patch("codemedic.agents.fixer.run_fixer", return_value=patch_proposal),
         WorkflowRuntime(db_path) as runtime,
     ):
-        first = runtime.run("Fix the Demo", DEMO_REPO, thread_id="thread-a")
-        second = runtime.run("Fix the Demo", DEMO_REPO, thread_id="thread-b")
+        first = runtime.run(
+            "Fix the Demo", DEMO_REPO, thread_id="thread-a",
+            review_policy="controlled_auto",
+        )
+        second = runtime.run(
+            "Fix the Demo", DEMO_REPO, thread_id="thread-b",
+            review_policy="controlled_auto",
+        )
 
         assert first.thread_id == "thread-a"
         assert second.thread_id == "thread-b"
@@ -217,7 +223,7 @@ def test_runtime_get_state_recovers_diagnosis_review_after_reopen(tmp_path: Path
         patch("codemedic.agents.fixer.run_fixer", return_value=patch_proposal),
         WorkflowRuntime(db_path) as runtime_a,
     ):
-        first = runtime_a.run("Fix the Demo", DEMO_REPO)
+        first = runtime_a.run("Fix the Demo", DEMO_REPO, review_policy="manual")
 
     with (
         patch("codemedic.graph.nodes.run_investigator", return_value=diagnosis),
@@ -249,7 +255,7 @@ def test_runtime_get_state_recovers_patch_review_after_reopen(tmp_path: Path) ->
         patch("codemedic.agents.fixer.run_fixer", return_value=patch_proposal),
         WorkflowRuntime(db_path) as runtime_a,
     ):
-        first = runtime_a.run("Fix the Demo", DEMO_REPO)
+        first = runtime_a.run("Fix the Demo", DEMO_REPO, review_policy="controlled_auto")
 
     with WorkflowRuntime(db_path) as runtime_b:
         recovered = runtime_b.get_state(first.thread_id)

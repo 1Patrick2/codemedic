@@ -74,6 +74,7 @@ class WorkflowRuntime:
         *,
         thread_id: str | None = None,
         execution_backend: str | ExecutionBackend | None = None,
+        review_policy: str | None = None,
     ) -> WorkflowRunResult:
         """Invoke a new workflow and return its structured snapshot."""
         self._ensure_open()
@@ -88,6 +89,7 @@ class WorkflowRuntime:
             execution_backend=ExecutionBackend(
                 execution_backend or self._execution_backend,
             ).value,
+            review_policy=review_policy or "manual",
         )
         recorder = TrajectoryRecorder(run_id, tid)
         register_recorder(recorder)

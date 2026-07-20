@@ -139,6 +139,7 @@ def build_workflow(retrieval_node: Any | None = None) -> StateGraph:
             "sufficient": "fixer_agent",
             "insufficient": "hybrid_retrieve",
             "uncertain": "mark_diagnosis_review_waiting",
+            "manual_review": "mark_diagnosis_review_waiting",
         },
     )
 
@@ -223,6 +224,7 @@ def run_workflow(
     error_log: str | None = None,
     *,
     thread_id: str | None = None,
+    review_policy: str | None = None,
 ) -> "WorkflowRunResult":
     """Run the full workflow and return a structured result.
 
@@ -234,6 +236,7 @@ def run_workflow(
         repository_path: Path to the repository root.
         error_log: Optional error log content.
         thread_id: Optional thread ID for resumption.
+        review_policy: 'manual' (default) or 'controlled_auto'.
 
     Returns:
         WorkflowRunResult with thread_id, status, and state snapshot.
@@ -247,6 +250,7 @@ def run_workflow(
             repository_path,
             error_log,
             thread_id=thread_id,
+            review_policy=review_policy,
         )
 
 

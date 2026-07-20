@@ -72,6 +72,8 @@ class RepairState(TypedDict):
     """Decision from human review: 'approved', 'rejected', 'retry'."""
     review_reason: str | None
     """Reason provided with the human decision."""
+    review_policy: str
+    """Whether human review is required: 'manual' or 'controlled_auto'."""
 
     # ── Final ───────────────────────────────────────────────────────
     final_status: Literal["通过", "人工复核", "拒绝"] | None
@@ -91,6 +93,7 @@ def create_initial_state(
     run_id: str | None = None,
     thread_id: str | None = None,
     execution_backend: Literal["temporary", "docker"] = "temporary",
+    review_policy: str = "manual",
 ) -> RepairState:
     """Create a fresh RepairState with defaults."""
     import uuid
@@ -125,6 +128,7 @@ def create_initial_state(
         fix_attempt_count=0,
         human_decision=None,
         review_reason=None,
+        review_policy=review_policy,
         final_status=None,
         final_report=None,
         errors=[],

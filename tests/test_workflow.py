@@ -40,6 +40,7 @@ def initial_state() -> RepairState:
     return create_initial_state(
         issue="Test issue",
         repository_path=DEMO_REPO,
+        review_policy="controlled_auto",
     )
 
 
@@ -472,6 +473,7 @@ class TestWorkflowGraph:
 
         agent = compile_workflow(checkpointer=MemorySaver())
         config = {"configurable": {"thread_id": "test_loop"}}
+        initial_state["review_policy"] = "manual"
 
         # First invoke pauses at diagnosis review
         result = agent.invoke(initial_state, config)
@@ -524,6 +526,7 @@ class TestWorkflowGraph:
         )
 
         initial_state["thread_id"] = "test_diagnosis_override"
+        initial_state["review_policy"] = "manual"
         agent = compile_workflow(checkpointer=MemorySaver())
         config = {"configurable": {"thread_id": "test_diagnosis_override"}}
 
@@ -571,6 +574,7 @@ class TestWorkflowGraph:
         )
 
         initial_state["thread_id"] = "test_invalid_diagnosis_override"
+        initial_state["review_policy"] = "manual"
         agent = compile_workflow(checkpointer=MemorySaver())
         config = {"configurable": {"thread_id": "test_invalid_diagnosis_override"}}
 
@@ -612,6 +616,7 @@ class TestWorkflowGraph:
         )
 
         initial_state["thread_id"] = "test_empty_diagnosis_override"
+        initial_state["review_policy"] = "manual"
         agent = compile_workflow(checkpointer=MemorySaver())
         config = {"configurable": {"thread_id": "test_empty_diagnosis_override"}}
 

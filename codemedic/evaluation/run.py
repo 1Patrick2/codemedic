@@ -199,6 +199,7 @@ def run_real_model_task(
             str(task.repository_path),
             task.error_log,
             thread_id=run_id,
+            review_policy="controlled_auto",
         )
         for _ in range(task.max_retries + 2):
             if not result.interrupted:

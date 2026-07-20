@@ -22,12 +22,13 @@ from codemedic.schemas.adapters import (
 SUFFICIENT: Literal["sufficient"] = "sufficient"
 INSUFFICIENT: Literal["insufficient"] = "insufficient"
 UNCERTAIN: Literal["uncertain"] = "uncertain"
+MANUAL_REVIEW: Literal["manual_review"] = "manual_review"
 
-RouteLabel = Literal["sufficient", "insufficient", "uncertain"]
+RouteLabel = Literal["sufficient", "insufficient", "uncertain", "manual_review"]
 
 
 def evidence_gate_router(state: RepairState) -> RouteLabel:
-    """Route based on evidence sufficiency and validation.
+    """Route based on evidence sufficiency and review policy.
 
     Rules (in order):
       1. No diagnosis → INSUFFICIENT (need investigation)
@@ -37,7 +38,9 @@ def evidence_gate_router(state: RepairState) -> RouteLabel:
       5. Missing information reported → UNCERTAIN (manual review)
       6. Low confidence with rounds left → INSUFFICIENT (retry)
       7. Low confidence no rounds → UNCERTAIN
-      8. All checks pass → SUFFICIENT (proceed to fixer)
+      8. All checks pass → check review_policy
+         - manual → MANUAL_REVIEW (always show diagnosis review)
+         - controlled_auto → SUFFICIENT (proceed to fixer)
 
     All values are taken directly from state — no LLM calls.
     """
@@ -70,9 +73,14 @@ def evidence_gate_router(state: RepairState) -> RouteLabel:
     if diagnosis.confidence < 0.6 and state.get("retrieval_round", 0) < 2:
         return INSUFFICIENT
 
-    # Good enough — proceed
+    # Good enough — check review_policy
     if diagnosis.confidence < 0.6:
         return UNCERTAIN
+
+    # Non-narrowing policy gates:
+    review_policy = state.get("review_policy", "manual")
+    if review_policy == "manual":
+        return MANUAL_REVIEW
 
     return SUFFICIENT
 

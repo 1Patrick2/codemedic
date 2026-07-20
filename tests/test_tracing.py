@@ -150,7 +150,7 @@ def test_review_interrupt_is_not_recorded_as_node_failure(tmp_path, monkeypatch)
         patch("codemedic.agents.fixer.run_fixer", return_value=patch_proposal),
         WorkflowRuntime(db_path) as runtime,
     ):
-        first = runtime.run("Fix the Demo", DEMO_REPO)
+        first = runtime.run("Fix the Demo", DEMO_REPO, review_policy="controlled_auto")
         run_id = first.state["run_id"]
         reader = TrajectoryReader(tmp_path / "runtime" / "runs")
         events = reader.read_events(run_id)

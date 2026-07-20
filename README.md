@@ -1,14 +1,14 @@
 # CodeMedic
 
-> Current implementation status (2026-07-17): deterministic C1-C7 closure, Trajectory D1, Minimal Inspector D2 with Evaluation/trajectory filtering, Evaluation Harness foundations, Retrieval A/B/C framework, and the first accepted 15-run real-model proof are implemented. The runtime is Temporary Workspace Isolation, not a production security sandbox.
+> Current implementation status (2026-07-20): Deterministic closure C7, Trajectory D1, Run Inspector D2, Evaluation Harness F, Retrieval A/B/C framework G, and Real-model proof E are all implemented. Docker runtime I is available as an opt-in backend. The runtime is Temporary Workspace Isolation, not a production security sandbox.
 
-> Evaluation status: local harness code, safety-task reporting, read-only Evaluation APIs, and a 15-run real-model report are available. The accepted run met the Stage 1 safety and threshold gates; real Provider calls remain explicitly gated and are not part of normal CI.
+> Evaluation status: Evaluation Harness is fully implemented with batch runner, CLI, reporting, and read-only APIs. A 15-run real-model proof (5 tasks × 3 repeats) completed with 80% E2E pass rate and 0% false pass / unauthorized modification. Real Provider calls remain gated behind API key configuration and are not part of CI.
 
 > Retrieval status: deterministic Baselines A, B, and C have completed matched 15-run end-to-end Provider batches. Baseline B reached 86.7% Patch Apply, Final Test, and End-to-End pass rates versus 46.7% for A and C in this controlled batch; the result is documented as a local experiment, not a production guarantee.
 
-> Release status: `test/real-model-proof` contains the local Stage 0/1/3/4 implementation changes. CI also runs on `test/*` pushes. Local `runtime/`, `.env`, checkpoints, trajectories, and evaluation artifacts are intentionally not tracked.
+> Release status: the `test/real-model-proof` branch — which contains the full implementation of deterministic closure, trajectory, inspector, evaluation harness, retrieval baselines, and docker runtime — is being merged to `main` as the final project baseline. Docker E2E tests are skipped when Docker or the configured image is unavailable.
 
-> Next stage: Docker Runtime is now implemented as an opt-in execution backend. The default remains Temporary Workspace Isolation; Docker E2E is skipped when Docker or the configured image is unavailable.
+> Docker Runtime is an opt-in execution backend. The default remains Temporary Workspace Isolation; Docker E2E is skipped when Docker or the configured image is unavailable.
 
 ## Docker Runtime
 
@@ -36,9 +36,9 @@ send repository/task data to the configured Provider and are not part of CI.
 The current local comparison is summarized in
 [`docs/retrieval_baseline_e2e_report.md`](docs/retrieval_baseline_e2e_report.md).
 
-基于 LangChain 与 LangGraph 的多 Agent 代码诊断与修复系统。
+基于 LangGraph 的可验证、可恢复、人机协同代码修复系统。
 
-Investigator → Fixer → Human Review → Sandbox → Verifier 闭环，覆盖从根因定位到测试验证的全流程。
+确定性证据验证 → LLM 补丁生成 → 人工审批 → 隔离应用 → 真实测试闭环，覆盖从根因定位到测试验证的全流程。
 
 ## 系统架构
 
@@ -70,22 +70,24 @@ Investigator → Fixer → Human Review → Sandbox → Verifier 闭环，覆盖
 
 ## 当前状态
 
-核心 Graph 路由、跨实例 Checkpoint 恢复、失败反馈重试、公开人工授权 API、Trajectory 和确定性 E2E 已通过本地验证；C7、D1、D2、E1、Evaluation Harness 基础和 Retrieval A/B/C 实验框架已经实现。当前真实 LLM 数据采集仍受外发安全门控制，完整 Inspector UI 和基于真实数据的 Retrieval 结论尚未完成。
+核心 Graph 路由、跨实例 Checkpoint 恢复、失败反馈重试、公开人工授权 API、Trajectory 记录、Run Inspector（含 Diagnosis／Patch Review、Trajectory 浏览器、Evaluation 面板）已完成。Evaluation Harness（Batch Runner + CLI + Report）和 Retrieval A/B/C 基线对比（AST Baseline B 86.7% E2E pass）也已实现。Docker 执行后端作为可选隔离方案可用。真实 LLM 数据采集受外发安全门控制，需要用户手动配置 API Key。
 
 | 阶段 | 内容 | 状态 |
 |------|------|------|
-| Stage 0 | 环境、依赖、项目骨架 | ✅ 基本完成 |
-| Stage 1 | Investigator 工具 + CLI + Trace | ⚠️ JSON + Pydantic 主路径可用，Provider 原生 Structured Output 未完成 |
-| Stage 2 | LangGraph StateGraph + Evidence Gate | ✅ 基本完成 |
+| Stage 0 | 环境、依赖、项目骨架 | ✅ 完成 |
+| Stage 1 | Investigator 工具 + CLI + Trace | ✅ JSON + Pydantic 主路径可用；Provider 原生 Structured Output 待迁移 |
+| Stage 2 | LangGraph StateGraph + Evidence Gate | ✅ 完成 |
 | Stage 3 | Fixer + Human Review (Interrupt) | ✅ Interrupt / Resume / Retry 反馈已接通 |
 | Stage 4 | Sandbox + Test Runner + Verifier | ✅ 真实 Patch、测试和最终状态判定已验证 |
 | Phase A | 安全加固 | ✅ 完成 |
-| Phase C | Deterministic Closure | ✅ C1-C7 完成 |
-| Phase D1 | Unified Trajectory | ✅ 基础能力完成 |
-| Phase D2 | Minimal Run Inspector | ✅ 原型完成；Evaluation 页面和完整演示待完成 |
-| Phase E | Real Model Proof | ⏳ 等待外发数据授权和真实运行 |
-| Phase F | Evaluation Harness | ✅ 本地 Harness 完成；真实数据闭环待完成 |
-| Phase G | Retrieval Baselines | ✅ A/B/C 框架完成；真实数据对比待完成 |
+| Phase C | Deterministic Closure (C1-C7) | ✅ 完成 |
+| Phase D1 | Unified Trajectory | ✅ 完成 |
+| Phase D2 | Minimal Run Inspector | ✅ 完成（含状态查看、Review、Trajectory、Patch History、Evaluation 面板） |
+| Phase E | Real Model Proof | ✅ 15-run 真实模型报告已接受 (80% E2E, 0% False Pass) |
+| Phase F | Evaluation Harness | ✅ Harness 完成 (Batch Runner + CLI + YAML Task + Report) |
+| Phase G | Retrieval Baselines | ✅ A/B/C 实现并对比完成 (Baseline B 86.7% 领先) |
+| Phase H | UI 完善 | ✅ Inspector 多页面与 Evaluation 面板已实现 |
+| Phase I | Docker Runtime | ✅ Opt-in 执行后端 (fail-closed, 无网络, 只读根文件系统)
 
 ## 测试分层
 
@@ -214,6 +216,6 @@ codemedic/
 
 - 当前仅支持 Python 项目作为诊断目标
 - Patch Apply 依赖 `git apply`（在 Windows/macOS/Linux 均可使用）
-- Retrieval 当前仅提供确定性 A/B/C 基线，不引入 Embedding、Vector Database 或独立 Retrieval Agent
-- Streamlit 目前是最小 Inspector 原型，完整 Evaluation 页面和演示收口仍待后续阶段完善
-- Evaluation Harness 已完成本地代码闭环，真实模型结果和阈值评估尚未采集
+- Retrieval 当前仅提供确定性 A/B/C 基线（Baseline B 在 15-run 实验中达到 86.7% E2E pass），不引入 Embedding、Vector Database 或独立 Retrieval Agent
+- Streamlit Inspector 已完成状态查看、Review 操作、Trajectory 浏览、Patch History 和 Evaluation 面板
+- Evaluation Harness 已完成本地代码闭环和 15-run 真实模型报告，非 CI 运行需手动配置 API Key

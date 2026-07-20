@@ -2,15 +2,15 @@
 
 > Current implementation status (2026-07-20): Deterministic closure C7, Trajectory D1, Run Inspector D2, Evaluation Harness F, Retrieval A/B/C framework G, and Real-model proof E are all implemented. Docker runtime I is available as an opt-in backend. The runtime is Temporary Workspace Isolation, not a production security sandbox.
 
-> Evaluation status: Evaluation Harness is fully implemented with batch runner, CLI, reporting, and read-only APIs. A 15-run real-model proof (5 tasks × 3 repeats) completed with 80% E2E pass rate and 0% false pass / unauthorized modification. Real Provider calls remain gated behind API key configuration and are not part of CI.
+> Evaluation status: Evaluation Harness is fully implemented with batch runner, CLI, reporting, and read-only APIs. A 15-run real-model proof (5 tasks × 3 repeats) completed with Controlled Human-assisted E2E Pass Rate of 80% and 0% false pass / unauthorized modification. Real Provider calls remain gated behind API key configuration and are not part of CI.
 
 > Retrieval status: deterministic Baselines A, B, and C have completed matched 15-run end-to-end Provider batches. Baseline B reached 86.7% Patch Apply, Final Test, and End-to-End pass rates versus 46.7% for A and C in this controlled batch; the result is documented as a local experiment, not a production guarantee.
 
-> Release status: the `test/real-model-proof` branch — which contains the full implementation of deterministic closure, trajectory, inspector, evaluation harness, retrieval baselines, and docker runtime — is being merged to `main` as the final project baseline. Docker E2E tests are skipped when Docker or the configured image is unavailable.
+> Release status: the `test/real-model-proof` branch contains the full implementation of deterministic closure, trajectory, single-page Streamlit inspector, evaluation harness, retrieval baselines, and experimental Docker backend. The branch is the current V1 baseline and has not yet been merged to `main`. Local `runtime/`, `.env`, and evaluation artifacts are intentionally not tracked. Docker E2E tests are skipped when Docker or the configured image is unavailable.
 
 > Docker Runtime is an opt-in execution backend. The default remains Temporary Workspace Isolation; Docker E2E is skipped when Docker or the configured image is unavailable.
 
-## Docker Runtime
+## Experimental Docker Test Backend
 
 Docker execution is opt-in through `EXECUTION_BACKEND=docker` or
 `WorkflowRuntime(execution_backend="docker")`. Build the local test image with:
@@ -82,12 +82,12 @@ The current local comparison is summarized in
 | Phase A | 安全加固 | ✅ 完成 |
 | Phase C | Deterministic Closure (C1-C7) | ✅ 完成 |
 | Phase D1 | Unified Trajectory | ✅ 完成 |
-| Phase D2 | Minimal Run Inspector | ✅ 完成（含状态查看、Review、Trajectory、Patch History、Evaluation 面板） |
+| Phase D2 | Minimal Run Inspector | ✅ Single-page Streamlit Inspector (含状态查看、Review、Trajectory、Patch History、Evaluation 面板) |
 | Phase E | Real Model Proof | ✅ 15-run 真实模型报告已接受 (80% E2E, 0% False Pass) |
 | Phase F | Evaluation Harness | ✅ Harness 完成 (Batch Runner + CLI + YAML Task + Report) |
-| Phase G | Retrieval Baselines | ✅ A/B/C 实现并对比完成 (Baseline B 86.7% 领先) |
+| Phase G | Retrieval Baselines | ✅ A/B/C 实现并对比完成 (Baseline B 86.7% — 当前 Fixer-context Retrieval 候选) |
 | Phase H | UI 完善 | ✅ Inspector 多页面与 Evaluation 面板已实现 |
-| Phase I | Docker Runtime | ✅ Opt-in 执行后端 (fail-closed, 无网络, 只读根文件系统)
+| Phase I | Docker Runtime | ✅ 实验性 Opt-in 执行后端 (fail-closed, 无网络, 只读根文件系统)
 
 ## 测试分层
 
@@ -219,3 +219,12 @@ codemedic/
 - Retrieval 当前仅提供确定性 A/B/C 基线（Baseline B 在 15-run 实验中达到 86.7% E2E pass），不引入 Embedding、Vector Database 或独立 Retrieval Agent
 - Streamlit Inspector 已完成状态查看、Review 操作、Trajectory 浏览、Patch History 和 Evaluation 面板
 - Evaluation Harness 已完成本地代码闭环和 15-run 真实模型报告，非 CI 运行需手动配置 API Key
+
+## 参考文档
+
+- [已知限制](docs/known_limitations.md) — 当前项目的安全、模型、测试和范围限制
+- [V1 Smoke Test 记录](docs/evidence/v1_smoke_test.md) — 真实模型冒烟测试验证摘要
+- [架构设计](docs/architecture.md) — 系统架构和设计决策
+- [Retrieval 基线对比报告](docs/retrieval_baseline_e2e_report.md) — A/B/C 基线端到端对比
+- [真实模型评测报告](docs/real_model_report.md) — 15-run 真实模型能力证明
+- [基线审计](docs/baseline_audit.md) — 安全与正确性基线审计

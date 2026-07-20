@@ -40,3 +40,6 @@ runtime/runs/
 # OS
 Thumbs.db
 .DS_Store
+
+# CodeMedic runtime artifacts
+runtime/

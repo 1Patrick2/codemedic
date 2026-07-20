@@ -63,6 +63,25 @@ _SUMMARY_LABELS = (
 )
 
 
+def _strip_markdown_fences(diff_text: str) -> str:
+    """Strip Markdown code-fence markers from a diff block.
+
+    Handles:
+      - Opening ```diff or ``` or ```\n
+      - Closing ``` (possibly with trailing whitespace)
+    Does NOT modify content inside the fences.
+    """
+    lines = diff_text.splitlines()
+    cleaned: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        # Skip any Markdown code-fence markers
+        if stripped.startswith("```"):
+            continue
+        cleaned.append(line)
+    return "\n".join(cleaned)
+
+
 def _extract_summary_section(text: str, label: str) -> str:
     """Extract one summary field without consuming later labeled fields."""
     labels = "|".join(re.escape(item) for item in _SUMMARY_LABELS)
@@ -72,7 +91,11 @@ def _extract_summary_section(text: str, label: str) -> str:
 
 
 def _parse_fixer_response(text: str) -> PatchProposal:
-    """Parse the model's text response into a PatchProposal."""
+    """Parse the model's text response into a PatchProposal.
+
+    Extracts the Unified Diff section starting from '--- a/'.
+    Strips Markdown code fences (```diff / ```) if present.
+    """
     diff_parts = []
     in_diff = False
     for line in text.splitlines():
@@ -82,7 +105,7 @@ def _parse_fixer_response(text: str) -> PatchProposal:
             if line.startswith("MODIFIED_FILES:"):
                 break
             diff_parts.append(line)
-    unified_diff = "\n".join(diff_parts)
+    unified_diff = _strip_markdown_fences("\n".join(diff_parts))
 
     modified_files = [
         f.strip() for f in _extract_summary_section(text, "MODIFIED_FILES").split(",")

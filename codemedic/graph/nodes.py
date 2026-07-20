@@ -400,22 +400,36 @@ def prepare_fix_retry(state: RepairState) -> dict[str, Any]:
 
 
 def diagnosis_review_node(state: RepairState) -> dict[str, Any]:
-    """Human review for diagnosis evaluation.
+    """Human review (or auto-approval) for diagnosis evaluation.
 
     Triggered when evidence is insufficient, uncertain, or when
-    Investigator encounters errors. Displays diagnosis and allows
-    accept/reject decisions.
+    Investigator encounters errors. In manual mode, displays diagnosis
+    and allows accept/reject decisions. In controlled_auto mode,
+    auto-accepts without interrupting.
 
     Returns:
         human_decision and review_reason.
     """
-    from langgraph.types import interrupt
-
     from codemedic.schemas.adapters import get_diagnosis
     from codemedic.tools.context import RepositoryContext
     from codemedic.validation.evidence import validate_approved_files
 
     diag = get_diagnosis(state)
+    review_policy = state.get("review_policy", "manual")
+
+    # Controlled auto mode — accept without interrupt, record policy
+    if review_policy == "controlled_auto":
+        allowed_files = list(state.get("allowed_files", []))
+        errors = list(state.get("errors", []))
+        return {
+            "human_decision": "accept_diagnosis",
+            "review_reason": "auto-accepted (controlled_auto)",
+            "approved_files": allowed_files,
+            "allowed_files": allowed_files,
+            "errors": errors,
+        }
+
+    from langgraph.types import interrupt
 
     interrupt_value = {
         "review_type": "diagnosis",
@@ -578,6 +592,9 @@ def patch_validation_node(state: RepairState) -> dict[str, Any]:
     """Validate the patch against security and structural rules.
 
     Runs after Fixer produces a patch but before human review.
+    Performs:
+      1. Static diff structure/security validation
+      2. git apply --check in a temporary sandbox
     Stores diff_validation result in state for routing.
 
     Returns:
@@ -594,6 +611,7 @@ def patch_validation_node(state: RepairState) -> dict[str, Any]:
             ).model_dump(),
         }
 
+    from codemedic.tools.sandbox import cleanup_sandbox, create_temp_copy
     from codemedic.validation.diff import (
         check_declared_files_match_diff,
         validate_diff,
@@ -610,6 +628,42 @@ def patch_validation_node(state: RepairState) -> dict[str, Any]:
     raw_result["errors"].extend(mismatches)
     if mismatches:
         raw_result["valid"] = False
+
+    # If static validation passes, run git apply --check in a sandbox
+    if raw_result["valid"]:
+        sandbox_path = None
+        try:
+            sandbox_path = create_temp_copy(state["repository_path"])
+            import subprocess
+
+            check = subprocess.run(
+                ["git", "apply", "--check", "--ignore-whitespace"],
+                input=unified_diff,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                cwd=sandbox_path,
+                timeout=30,
+            )
+            if check.returncode != 0:
+                raw_result["valid"] = False
+                stderr_short = (check.stderr or "").strip()[:200]
+                raw_result["errors"].append(
+                    f"PATCH_APPLY_CHECK_FAILED: {stderr_short}"
+                )
+        except subprocess.TimeoutExpired:
+            raw_result["valid"] = False
+            raw_result["errors"].append("PATCH_APPLY_CHECK_TIMEOUT")
+        except FileNotFoundError:
+            raw_result["valid"] = False
+            raw_result["errors"].append("PATCH_APPLY_CHECK_INTERNAL_ERROR: git not found")
+        except Exception as exc:
+            raw_result["valid"] = False
+            raw_result["errors"].append(f"PATCH_APPLY_CHECK_INTERNAL_ERROR: {exc}")
+        finally:
+            if sandbox_path is not None:
+                cleanup_sandbox(sandbox_path)
 
     result = DiffValidationResult.model_validate(raw_result)
 
